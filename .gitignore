@@ -2,8 +2,9 @@
 logs/
 require/
 readme/
+__pycache__/
+*.pyc
 build/
 src/__pycache__/
 dist/
 package/
-readme/
