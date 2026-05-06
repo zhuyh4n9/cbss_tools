@@ -124,11 +124,6 @@ class DeviceParser:
                 self._base_devices[serial] = incoming[serial]
                 if serial not in self._order:
                     self._order.append(serial)
-                # 新接入设备先进入await，避免等待snapshot分类完成后才显示在待授权列表
-                if serial not in self._await_queue and serial not in self._ready_queue:
-                    await_device = copy.deepcopy(incoming[serial])
-                    await_device.device_type = "target_device"
-                    self._await_queue[serial] = self._make_await_device(await_device)
                 if serial not in self._classify_queue:
                     self._classify_queue.append(serial)
 
@@ -254,21 +249,35 @@ class DeviceParser:
             try:
                 classify_serial = self._next_classify_serial()
                 if classify_serial:
-                    snapshot = self.adb_manager.get_authenticator_snapshot(classify_serial)
+                    uuid_result = self.adb_manager.get_device_uuid(classify_serial)
+                    state_result = self.adb_manager.get_device_state(classify_serial)
+                    uuid = uuid_result.result_data.strip() if uuid_result.success and uuid_result.result_data else ""
+                    state = state_result.result_data.strip() if state_result.success and state_result.result_data else "Unknown"
+                    transfer_to_cube = False
+                    snapshot = None
+
+                    if not uuid_result.success and not state_result.success:
+                        snapshot = self.adb_manager.get_authenticator_snapshot(classify_serial)
+
                     with self._lock:
                         base = self._base_devices.get(classify_serial)
                         if not base:
                             continue
-                        if snapshot.success:
-                            # 识别为激活盒子
-                            base.device_type = "authenticator"
+                        if uuid_result.success or state_result.success:
+                            # 优先按target设备路径处理，减少额外snapshot命令带来的接入时延
+                            base.device_type = "target_device"
                             self._await_queue.pop(classify_serial, None)
-                            self._ready_queue.pop(classify_serial, None)
-                            # 移交给CubeManager管理
-                            transfer_to_cube = True
+                            self._ready_queue[classify_serial] = self._make_ready_device(base, uuid=uuid, state=state)
                         else:
+                            if snapshot and snapshot.success:
+                                # 识别为激活盒子
+                                base.device_type = "authenticator"
+                                self._await_queue.pop(classify_serial, None)
+                                self._ready_queue.pop(classify_serial, None)
+                                # 移交给CubeManager管理
+                                transfer_to_cube = True
                             # snapshot失败时：已识别过authenticator的设备不降级，避免显示到target列表
-                            if self.cube_manager.has_cube(classify_serial):
+                            elif self.cube_manager.has_cube(classify_serial):
                                 base.device_type = "authenticator"
                                 self._await_queue.pop(classify_serial, None)
                                 self._ready_queue.pop(classify_serial, None)
@@ -280,7 +289,7 @@ class DeviceParser:
                                     self._await_queue[classify_serial] = self._make_await_device(base)
                                 transfer_to_cube = False
 
-                    if snapshot.success and transfer_to_cube:
+                    if snapshot and snapshot.success and transfer_to_cube:
                         self.cube_manager.add_cube(classify_serial)
 
                     self._notify_callbacks('device_update', self.get_devices())
