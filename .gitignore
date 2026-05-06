@@ -6,3 +6,4 @@ build/
 package/TheCube_Release/
 src/__pycache__/
 dist/
+package/TheCube_Release.zip
