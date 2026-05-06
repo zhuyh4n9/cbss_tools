@@ -660,17 +660,19 @@ class AuthenticatorToolGUI:
             if device.device_type == "unknown" and not show_na_devices:
                 continue
 
+            status_text = (device.status or "").strip()
+            if not status_text:
+                status_text = "Checking..."
+            status_lower = status_text.lower()
+
             uuid_text = (device.uuid or "").strip()
-            if device.device_type == "unknown":
+            is_unknown_like = status_lower in ("unknown", "unknown device")
+            if device.device_type == "unknown" or (not uuid_text and is_unknown_like):
                 uuid_display = "N/A"
             else:
                 uuid_display = uuid_text if uuid_text else "获取中..."
 
-            status_text = (device.status or "").strip()
-            if not status_text:
-                status_text = "Checking..."
-
-            heading = "Activate" if (status_text.lower() == "unauthorized" and self._is_uuid_ready(uuid_display) and not auto_enabled) else "N/A"
+            heading = "Activate" if (status_lower == "unauthorized" and self._is_uuid_ready(uuid_display) and not auto_enabled) else "N/A"
             rows.append((
                 "serial:" + str(device.serial),
                 uuid_display,
