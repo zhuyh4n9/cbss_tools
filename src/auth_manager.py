@@ -3,7 +3,9 @@
 负责处理设备激活流程
 """
 import logging
+import queue
 import threading
+import time
 from typing import List, Optional, Callable
 from .adb_manager import ADBManager, DeviceInfo
 from .device_monitor import DeviceMonitor
@@ -16,6 +18,183 @@ class AuthenticationManager:
 
         self._authentication_lock = threading.Lock()
         self._is_authenticating = False
+
+        # 自动授权功能
+        self._auto_activation_enabled = self.device_monitor.config.getboolean('General', 'auto_activation_enabled', False)
+        self._activate_queue: queue.Queue[Optional[str]] = queue.Queue()
+        self._queued_serials = set()
+        self._in_progress_serials = set()
+        self._queue_lock = threading.Lock()
+        self._worker_running = False
+        self._worker_thread = None
+        self._stop_event = threading.Event()
+
+        # 始终注册回调，是否入队由开关控制
+        self.device_monitor.device_parser.add_callback('unauthorized_ready', self._on_unauthorized_ready)
+
+        if self._auto_activation_enabled:
+            self._start_activate_worker()
+
+    def is_auto_activation_enabled(self) -> bool:
+        """是否启用自动授权"""
+        return self._auto_activation_enabled
+
+    def set_auto_activation_enabled(self, enabled: bool):
+        """动态设置自动授权开关"""
+        enabled = bool(enabled)
+        if self._auto_activation_enabled == enabled:
+            return
+
+        self._auto_activation_enabled = enabled
+        if enabled:
+            self._start_activate_worker()
+            self._enqueue_existing_unauthorized_devices()
+            logging.info("自动授权功能已启用")
+        else:
+            self._clear_activate_queue()
+            self.stop()
+            logging.info("自动授权功能已禁用")
+
+    def _clear_activate_queue(self):
+        """清空自动授权队列与状态"""
+        with self._queue_lock:
+            self._queued_serials.clear()
+            self._in_progress_serials.clear()
+
+        while True:
+            try:
+                self._activate_queue.get_nowait()
+            except queue.Empty:
+                break
+
+    def _enqueue_existing_unauthorized_devices(self):
+        """开关开启时补齐当前未授权设备到队列"""
+        try:
+            for device in self.get_unauthorized_devices():
+                self._on_unauthorized_ready(device)
+        except Exception as e:
+            logging.error(f"补齐自动授权队列失败: {e}")
+
+    def stop(self):
+        """停止后台线程，确保 worker 完全退出后才返回"""
+        if not self._worker_running:
+            return
+        self._worker_running = False
+        self._stop_event.set()
+        # 发送哨兵值，快速唤醒队列阻塞
+        self._activate_queue.put(None)
+        if self._worker_thread and self._worker_thread.is_alive():
+            # 30s timeout: single authentication (ADB sign + activate) can take up to ~20s
+            self._worker_thread.join(timeout=30.0)
+            if self._worker_thread.is_alive():
+                logging.warning("worker 线程在超时内未能完全退出")
+
+    def _start_activate_worker(self):
+        # 若旧线程仍存活（stop() 尚未完全返回或超时），拒绝启动第二个 worker
+        if self._worker_thread and self._worker_thread.is_alive():
+            logging.warning("上一个 worker 线程仍在运行，拒绝启动新线程")
+            return
+        if self._worker_running:
+            return
+        self._stop_event.clear()
+        self._worker_running = True
+        self._worker_thread = threading.Thread(target=self._activate_worker_loop, daemon=True)
+        self._worker_thread.start()
+        logging.info("自动授权 activate_worker 已启动")
+
+    def _on_unauthorized_ready(self, device: DeviceInfo):
+        """DeviceParser解析完成后，将未授权设备加入自动授权队列"""
+        try:
+            if not self._auto_activation_enabled or not device:
+                return
+            serial = str(device.serial)
+            if not serial:
+                return
+            if not (device.status and device.status.strip().lower() == "unauthorized"):
+                return
+            if not device.uuid:
+                return
+
+            with self._queue_lock:
+                if serial in self._queued_serials or serial in self._in_progress_serials:
+                    return
+                self._queued_serials.add(serial)
+
+            self._activate_queue.put(serial)
+            logging.info(f"未授权设备已加入自动授权队列: {serial}")
+        except Exception as e:
+            logging.error(f"提交自动授权队列失败: {e}")
+
+    def _pick_authenticator(self) -> Optional[str]:
+        authenticators = self.get_available_authenticators()
+        if not authenticators:
+            return None
+        # 固定顺序选择，避免来回切换
+        return sorted(authenticators)[0]
+
+    def _is_device_still_unauthorized(self, serial: str) -> bool:
+        try:
+            device = self.device_monitor.get_device_by_serial(serial)
+            if not device:
+                return False
+            status = (device.status or "").strip().lower()
+            return status == "unauthorized" and bool(device.uuid)
+        except Exception:
+            return False
+
+    def _activate_worker_loop(self):
+        while self._worker_running and not self._stop_event.is_set():
+            serial = None
+            try:
+                # 0.2s timeout keeps the stop-event check responsive without significant CPU overhead
+                serial = self._activate_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+
+            # 停止哨兵 — break 退出循环
+            if serial is None:
+                break
+
+            serial = str(serial)
+            with self._queue_lock:
+                self._queued_serials.discard(serial)
+
+            # 设备状态变化后无需处理
+            if not self._is_device_still_unauthorized(serial):
+                continue
+
+            authenticator_serial = self._pick_authenticator()
+            if not authenticator_serial:
+                # Cube不可用，稍后重试
+                time.sleep(1.0)
+                if self._is_device_still_unauthorized(serial):
+                    with self._queue_lock:
+                        if serial not in self._queued_serials and serial not in self._in_progress_serials:
+                            self._queued_serials.add(serial)
+                            self._activate_queue.put(serial)
+                continue
+
+            with self._queue_lock:
+                if serial in self._in_progress_serials:
+                    continue
+                self._in_progress_serials.add(serial)
+
+            try:
+                result = self._run_authentication(serial, authenticator_serial)
+                if result.get('success'):
+                    logging.info(f"自动授权成功: {serial}")
+                else:
+                    logging.warning(f"自动授权失败: {serial}, {result.get('message', '')}")
+
+                # 自动授权后刷新 Cube 和 Target Device（仅在未停止时执行）
+                if self._worker_running and not self._stop_event.is_set():
+                    self.device_monitor.refresh_all_cube()
+                    self.device_monitor.refresh_all_device()
+            except Exception as e:
+                logging.error(f"自动授权执行异常: {serial}, {e}")
+            finally:
+                with self._queue_lock:
+                    self._in_progress_serials.discard(serial)
 
     def is_authenticating(self) -> bool:
         """检查是否正在执行激活"""
@@ -34,6 +213,11 @@ class AuthenticationManager:
         Returns:
             dict: 激活结果 {'success': bool, 'message': str, 'details': str}
         """
+        return self._run_authentication(device_serial, authenticator_serial, progress_callback)
+
+    def _run_authentication(self, device_serial: str, authenticator_serial: str,
+                            progress_callback: Optional[Callable] = None) -> dict:
+        """串行执行激活流程，避免并发冲突"""
         with self._authentication_lock:
             if self._is_authenticating:
                 return {
@@ -245,6 +429,6 @@ class AuthenticationManager:
         """获取未激活设备列表"""
         unauthorized_devices = []
         for device in self.device_monitor.get_ready_devices():
-            if device.status == "Unauthorized" and device.uuid:
+            if (device.status or "").strip().lower() == "unauthorized" and device.uuid:
                 unauthorized_devices.append(device)
         return unauthorized_devices

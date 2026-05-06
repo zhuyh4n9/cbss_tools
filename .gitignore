@@ -2,3 +2,8 @@
 logs/
 require/
 readme/
+build/
+src/__pycache__/
+dist/
+package/
+readme/
