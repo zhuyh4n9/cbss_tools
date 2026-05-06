@@ -1,0 +1,5 @@
+# Requirements for Authenticator Box PC Tool
+# GUI Framework
+tkinter
+# Standard library modules (usually included with Python)
+# configparser, datetime, subprocess, threading, json, logging, os
