@@ -140,6 +140,9 @@ class AuthenticationManager:
     def _is_device_still_unauthorized(self, serial: str) -> bool:
         try:
             device = self.device_monitor.get_device_by_serial(serial)
+            if not device and self.is_simulated_device(serial):
+                with self._simulated_lock:
+                    device = self._simulated_devices.get(str(serial))
             if not device:
                 return False
             status = (device.status or "").strip().lower()
@@ -248,6 +251,9 @@ class AuthenticationManager:
                 usb_port="SIM"
             )
             self._simulated_devices[serial] = device
+
+        if self._auto_activation_enabled and (device.status or "").strip().lower() == "unauthorized" and device.uuid:
+            self._on_unauthorized_ready(device)
 
         return DeviceInfo(
             serial=device.serial,
