@@ -249,14 +249,23 @@ class DeviceParser:
             try:
                 classify_serial = self._next_classify_serial()
                 if classify_serial:
-                    uuid_result = self.adb_manager.get_device_uuid(classify_serial)
-                    state_result = self.adb_manager.get_device_state(classify_serial)
-                    uuid = uuid_result.result_data.strip() if uuid_result.success and uuid_result.result_data else ""
-                    state = state_result.result_data.strip() if state_result.success and state_result.result_data else "Unknown"
                     transfer_to_cube = False
                     snapshot = None
                     known_cube = self.cube_manager.has_cube(classify_serial)
-                    needs_snapshot_check = (not uuid_result.success and not state_result.success and not known_cube)
+                    uuid = ""
+                    state = "Unknown"
+                    uuid_success = False
+                    state_success = False
+
+                    if not known_cube:
+                        uuid_result = self.adb_manager.get_device_uuid(classify_serial)
+                        state_result = self.adb_manager.get_device_state(classify_serial)
+                        uuid_success = uuid_result.success
+                        state_success = state_result.success
+                        uuid = uuid_result.result_data.strip() if uuid_success and uuid_result.result_data else ""
+                        state = state_result.result_data.strip() if state_success and state_result.result_data else "Unknown"
+
+                    needs_snapshot_check = (not known_cube and not uuid_success and not state_success)
 
                     if needs_snapshot_check:
                         snapshot = self.adb_manager.get_authenticator_snapshot(classify_serial)
@@ -265,7 +274,11 @@ class DeviceParser:
                         base = self._base_devices.get(classify_serial)
                         if not base:
                             continue
-                        if uuid_result.success or state_result.success:
+                        if known_cube:
+                            base.device_type = "authenticator"
+                            self._await_queue.pop(classify_serial, None)
+                            self._ready_queue.pop(classify_serial, None)
+                        elif uuid_success or state_success:
                             # 优先按target设备路径处理，减少额外snapshot命令带来的接入时延
                             base.device_type = "target_device"
                             self._await_queue.pop(classify_serial, None)
@@ -278,12 +291,6 @@ class DeviceParser:
                                 self._ready_queue.pop(classify_serial, None)
                                 # 移交给CubeManager管理
                                 transfer_to_cube = True
-                            # snapshot失败时：已识别过authenticator的设备不降级，避免显示到target列表
-                            elif known_cube:
-                                base.device_type = "authenticator"
-                                self._await_queue.pop(classify_serial, None)
-                                self._ready_queue.pop(classify_serial, None)
-                                transfer_to_cube = False
                             else:
                                 # 新设备按target处理，进入await
                                 base.device_type = "target_device"
