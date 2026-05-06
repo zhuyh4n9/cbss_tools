@@ -256,8 +256,9 @@ class DeviceParser:
                     transfer_to_cube = False
                     snapshot = None
                     known_cube = self.cube_manager.has_cube(classify_serial)
+                    needs_snapshot_check = (not uuid_result.success and not state_result.success and not known_cube)
 
-                    if not uuid_result.success and not state_result.success and not known_cube:
+                    if needs_snapshot_check:
                         snapshot = self.adb_manager.get_authenticator_snapshot(classify_serial)
 
                     with self._lock:
