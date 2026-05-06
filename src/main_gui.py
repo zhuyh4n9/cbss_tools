@@ -1358,7 +1358,7 @@ class AuthenticatorToolGUI:
             device_serial = item['values'][0].split('serial:')[-1]
             uuid_text = item['values'][1] if len(item['values']) > 1 else ""
             auth_status = item['values'][3]
-            if auth_status == 'Unauthorized':
+            if auth_status.strip().lower() == 'unauthorized':
                 if not self._is_uuid_ready(uuid_text):
                     messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), f"设备 {device_serial} 的UUID尚未获取完成，暂不允许激活")
                     return
