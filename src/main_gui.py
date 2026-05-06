@@ -133,6 +133,13 @@ class AuthenticatorToolGUI:
         tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.unlock_auth'), command=self.unlock_authenticator)
         tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.activate_auth'), command=self.activate_authenticator)
         tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.config_auth'), command=self.config_authenticator)
+        tools_menu.add_separator()
+        self.auto_activation_menu_var = tk.BooleanVar(value=self.auth_manager.is_auto_activation_enabled())
+        tools_menu.add_checkbutton(
+            label=self.prompt_mgr.get('MenuItems.auto_activation_toggle'),
+            variable=self.auto_activation_menu_var,
+            command=self.toggle_auto_activation
+        )
           # 新增：设备WiFi连接
         tools_menu.add_separator()
         tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.current_wifi'), command=self.view_current_wifi)
@@ -228,11 +235,23 @@ class AuthenticatorToolGUI:
     def create_device_frame(self, parent):
         device_frame = ttk.LabelFrame(parent, text=self.prompt_mgr.get('UI.device_list_title'), padding=10)
         device_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.auto_auth_tip_var = tk.StringVar(value="")
+        self.auto_auth_tip_label = tk.Label(
+            device_frame,
+            textvariable=self.auto_auth_tip_var,
+            fg='red',
+            anchor='w',
+            justify='left'
+        )
+        self.auto_auth_tip_label.pack(fill=tk.X, pady=(0, 4))
+
         button_frame = ttk.Frame(device_frame)
         button_frame.pack(fill=tk.X, pady=(0,5))
         self.refresh_button = ttk.Button(button_frame, text=self.prompt_mgr.get('UI.refresh_devices_btn'), command=self.refresh_devices)
         self.refresh_button.pack(side=tk.LEFT, padx=(0,5))
-        ttk.Button(button_frame, text=self.prompt_mgr.get('UI.activate_all_btn'), command=self.authenticate_all_devices).pack(side=tk.LEFT)
+        self.activate_all_button = ttk.Button(button_frame, text=self.prompt_mgr.get('UI.activate_all_btn'), command=self.authenticate_all_devices)
+        self.activate_all_button.pack(side=tk.LEFT)
         device_columns = (
             self.prompt_mgr.get('DeviceTable.col_serial'),
             self.prompt_mgr.get('DeviceTable.col_uuid'),
@@ -251,6 +270,7 @@ class AuthenticatorToolGUI:
         device_scrollbar_v.pack(side=tk.RIGHT, fill=tk.Y)
         device_scrollbar_h.pack(side=tk.BOTTOM, fill=tk.X)
         self.device_tree.bind('<Double-1>', self.on_device_double_click)
+        self._update_auto_auth_ui_state()
 
     def create_status_bar(self):
         """创建状态栏"""
@@ -398,6 +418,7 @@ class AuthenticatorToolGUI:
     def update_authenticator_display(self, authenticators: Dict[str, AuthenticatorInfo]):
         """更新激活盒子显示"""
         def update_ui():
+            self._update_auto_auth_ui_state(len(authenticators))
             # 更新激活盒子选择器
             authenticator_serials = list(authenticators.keys())
             self.update_authenticator_selector(authenticator_serials)
@@ -633,6 +654,7 @@ class AuthenticatorToolGUI:
         """更新设备显示"""
         logging.debug(f"Updating device display with {len(devices)} devices")
         show_na_devices = self.config_manager.getboolean('UI', 'show_na_devices', False)
+        auto_enabled = self.auth_manager.is_auto_activation_enabled()
         rows = []
         for device in devices:
             if device.device_type == "unknown" and not show_na_devices:
@@ -648,7 +670,7 @@ class AuthenticatorToolGUI:
             if not status_text:
                 status_text = "Checking..."
 
-            heading = "Activate" if (status_text == "Unauthorized" and self._is_uuid_ready(uuid_display)) else "N/A"
+            heading = "Activate" if (status_text.lower() == "unauthorized" and self._is_uuid_ready(uuid_display) and not auto_enabled) else "N/A"
             rows.append((
                 "serial:" + str(device.serial),
                 uuid_display,
@@ -658,6 +680,26 @@ class AuthenticatorToolGUI:
             ))
 
         self.root.after(0, lambda r=rows: self._apply_device_rows(r))
+
+    def _update_auto_auth_ui_state(self, authenticator_count: Optional[int] = None):
+        """根据自动授权开关更新UI提示与手动操作可用性"""
+        auto_enabled = self.auth_manager.is_auto_activation_enabled()
+
+        if authenticator_count is None:
+            authenticator_count = len(getattr(self, 'authenticators_data', {}) or {})
+
+        if auto_enabled:
+            if authenticator_count > 0:
+                self.auto_auth_tip_var.set(self.prompt_mgr.get('UI.auto_auth_enabled_hint'))
+            else:
+                self.auto_auth_tip_var.set(self.prompt_mgr.get('UI.auto_auth_enabled_cube_unavailable_hint'))
+
+            if hasattr(self, 'activate_all_button'):
+                self.activate_all_button.config(state='disabled')
+        else:
+            self.auto_auth_tip_var.set("")
+            if hasattr(self, 'activate_all_button'):
+                self.activate_all_button.config(state='normal')
 
     def _apply_device_rows(self, rows: List[tuple]):
         """在主线程应用设备表格数据"""
@@ -716,8 +758,44 @@ class AuthenticatorToolGUI:
         file_path = filedialog.askopenfilename(title=self.prompt_mgr.get('MenuItems.load_config'), filetypes=[('INI文件','*.ini'),('所有文件','*.*')])
         if file_path:
             self.config_manager.load_config(file_path)
+            # 配置重载后，同步自动授权开关
+            auto_enabled = self.config_manager.getboolean('General', 'auto_activation_enabled', False)
+            self.auth_manager.set_auto_activation_enabled(auto_enabled)
+            if hasattr(self, 'auto_activation_menu_var'):
+                self.auto_activation_menu_var.set(auto_enabled)
+            self._update_auto_auth_ui_state()
             self.status_var.set(self.prompt_mgr.format('InfoMessages.config_loaded_status', path=file_path))
             messagebox.showinfo(self.prompt_mgr.get('Common.success_title'), self.prompt_mgr.get('InfoMessages.config_loaded_success'))
+
+    def toggle_auto_activation(self):
+        """通过工具菜单切换自动授权开关并持久化到配置"""
+        desired_state = bool(self.auto_activation_menu_var.get())
+
+        if self.is_operation_in_progress or self.auth_manager.is_authenticating():
+            # 当前有操作时不允许切换
+            self.auto_activation_menu_var.set(self.auth_manager.is_auto_activation_enabled())
+            messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self.prompt_mgr.get('Errors.operation_in_progress'))
+            return
+
+        try:
+            self.auth_manager.set_auto_activation_enabled(desired_state)
+            self.config_manager.set('General', 'auto_activation_enabled', 'true' if desired_state else 'false')
+            saved = self.config_manager.save_config()
+
+            self._update_auto_auth_ui_state()
+            if saved:
+                self.status_var.set(
+                    self.prompt_mgr.get('InfoMessages.auto_auth_enabled_status')
+                    if desired_state else
+                    self.prompt_mgr.get('InfoMessages.auto_auth_disabled_status')
+                )
+            else:
+                self.status_var.set(self.prompt_mgr.get('InfoMessages.auto_auth_save_failed_status'))
+                messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self.prompt_mgr.get('InfoMessages.auto_auth_save_failed_status'))
+        except Exception as e:
+            logging.error(f"切换自动授权功能失败: {e}")
+            self.auto_activation_menu_var.set(self.auth_manager.is_auto_activation_enabled())
+            messagebox.showerror(self.prompt_mgr.get('Common.error_title'), self.prompt_mgr.format('Errors.unknown_error', msg=str(e)))
 
     def export_config(self):
         file_path = filedialog.asksaveasfilename(title=self.prompt_mgr.get('MenuItems.export_config'), defaultextension='.ini', filetypes=[('INI文件','*.ini'),('所有文件','*.*')])
@@ -762,7 +840,7 @@ class AuthenticatorToolGUI:
     def show_about(self):
         """显示关于信息"""
         company = self.config_manager.get('About', 'company', 'Autochips Inc')
-        version = self.config_manager.get('General', 'version', '2.2')
+        version = self.config_manager.get('General', 'version', '3.0')
         description = self.config_manager.get('About', 'description', self.prompt_mgr.get('Dialogs.about_desc'))
 
         about_text = f"""
@@ -1270,13 +1348,17 @@ class AuthenticatorToolGUI:
         self.refresh_button.config(state='normal')
 
     def on_device_double_click(self, event):
+        if self.auth_manager.is_auto_activation_enabled():
+            messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self.prompt_mgr.get('Errors.auto_auth_manual_disabled'))
+            return
+
         selection = self.device_tree.selection()
         if selection:
             item = self.device_tree.item(selection[0])
             device_serial = item['values'][0].split('serial:')[-1]
             uuid_text = item['values'][1] if len(item['values']) > 1 else ""
             auth_status = item['values'][3]
-            if auth_status == 'Unauthorized':
+            if auth_status.strip().lower() == 'unauthorized':
                 if not self._is_uuid_ready(uuid_text):
                     messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), f"设备 {device_serial} 的UUID尚未获取完成，暂不允许激活")
                     return
@@ -1300,6 +1382,10 @@ class AuthenticatorToolGUI:
 
     def authenticate_device(self, device_serial: str):
         """激活单个设备"""
+        if self.auth_manager.is_auto_activation_enabled():
+            messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self.prompt_mgr.get('Errors.auto_auth_manual_disabled'))
+            return
+
         if self.is_operation_in_progress or self.auth_manager.is_authenticating():
             messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self.prompt_mgr.get('Errors.operation_in_progress'))
             return
@@ -1326,6 +1412,10 @@ class AuthenticatorToolGUI:
 
     def authenticate_all_devices(self):
         """激活所有设备"""
+        if self.auth_manager.is_auto_activation_enabled():
+            messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self.prompt_mgr.get('Errors.auto_auth_manual_disabled'))
+            return
+
         if self.is_operation_in_progress or self.auth_manager.is_authenticating():
             messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self.prompt_mgr.get('Errors.operation_in_progress'))
             return
@@ -1588,6 +1678,9 @@ class AuthenticatorToolGUI:
         try:
             # 停止网络监控 (NEW in Update 4)
             self.stop_network_monitoring()
+
+            # 停止自动授权工作线程
+            self.auth_manager.stop()
 
             # 停止设备监控
             self.device_monitor.stop_monitoring()
