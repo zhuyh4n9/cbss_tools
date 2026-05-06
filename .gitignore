@@ -2,3 +2,5 @@
 logs/
 require/
 readme/
+__pycache__/
+*.pyc

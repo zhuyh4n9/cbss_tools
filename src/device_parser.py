@@ -124,6 +124,11 @@ class DeviceParser:
                 self._base_devices[serial] = incoming[serial]
                 if serial not in self._order:
                     self._order.append(serial)
+                # 新接入设备先进入await，避免等待snapshot分类完成后才显示在待授权列表
+                if serial not in self._await_queue and serial not in self._ready_queue:
+                    await_device = copy.deepcopy(incoming[serial])
+                    await_device.device_type = "target_device"
+                    self._await_queue[serial] = self._make_await_device(await_device)
                 if serial not in self._classify_queue:
                     self._classify_queue.append(serial)
 
