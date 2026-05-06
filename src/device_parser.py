@@ -36,6 +36,7 @@ class DeviceParser:
             'device_update': [],
             'authenticator_update': [],
             'authenticator_serials_update': [],
+            'unauthorized_ready': [],
             'error': [],
         }
 
@@ -313,6 +314,8 @@ class DeviceParser:
                     self._ready_queue[serial] = ready_device
 
                 self._notify_callbacks('device_update', self.get_devices())
+                if ready_device.status and ready_device.status.strip().lower() == "unauthorized" and ready_device.uuid:
+                    self._notify_callbacks('unauthorized_ready', copy.deepcopy(ready_device))
 
             except Exception as e:
                 logging.error(f"DeviceParser 解析异常: {e}")

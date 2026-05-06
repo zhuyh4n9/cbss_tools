@@ -2,3 +2,7 @@
 logs/
 require/
 readme/
+build/
+package/TheCube_Release/
+src/__pycache__/
+dist/

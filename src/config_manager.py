@@ -137,6 +137,7 @@ class ConfigManager:
         self.config.set('General', 'refresh_rate', '1')
         self.config.set('General', 'adb_path', 'adb/adb.exe')
         self.config.set('General', 'version', '1.0.0')
+        self.config.set('General', 'auto_activation_enabled', 'false')
 
         # UI配置
         self.config.add_section('UI')
