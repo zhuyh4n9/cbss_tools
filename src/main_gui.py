@@ -17,6 +17,7 @@ from .adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
 from .device_monitor import DeviceMonitor
 from .auth_manager import AuthenticationManager
 from .prompt_manager import PromptManager
+from .build_options import SIMULATED_DEVICE_STATUS_OPTIONS, SIMULATED_AUTHENTICATOR_SERIAL
 from .diaglog import (
     LogLevelDialog,
     LogViewDialog,
@@ -1407,7 +1408,7 @@ class AuthenticatorToolGUI:
         status_combo = ttk.Combobox(
             dialog,
             textvariable=status_var,
-            values=["Pirated", "Authorized", "Unauthorized"],
+            values=list(SIMULATED_DEVICE_STATUS_OPTIONS),
             state="readonly",
             width=30
         )
@@ -1452,7 +1453,7 @@ class AuthenticatorToolGUI:
             return
 
         if self.auth_manager.is_simulated_device(device_serial):
-            self.perform_device_authentication(device_serial, "SIMULATED_AUTHENTICATOR")
+            self.perform_device_authentication(device_serial, SIMULATED_AUTHENTICATOR_SERIAL)
             return
 
         # 获取可用的激活盒子
@@ -1487,12 +1488,12 @@ class AuthenticatorToolGUI:
 
         # 获取可用的激活盒子
         authenticators = list(self.device_monitor.authenticators.keys())
-        has_real_unauthorized = any(not self.auth_manager.is_simulated_device(device.serial) for device in unauthorized_devices)
-        if not authenticators and has_real_unauthorized:
+        has_physical_unauthorized_devices = any(not self.auth_manager.is_simulated_device(device.serial) for device in unauthorized_devices)
+        if not authenticators and has_physical_unauthorized_devices:
             messagebox.showerror(self.prompt_mgr.get('Common.error_title'), self.prompt_mgr.get('Validation.no_available_authenticator'))
             return
-        if not authenticators and not has_real_unauthorized:
-            self.perform_batch_authentication("SIMULATED_AUTHENTICATOR")
+        if not authenticators and not has_physical_unauthorized_devices:
+            self.perform_batch_authentication(SIMULATED_AUTHENTICATOR_SERIAL)
             return
 
         # UUID未获取完成的设备不允许进入批量激活

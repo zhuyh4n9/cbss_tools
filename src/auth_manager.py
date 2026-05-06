@@ -10,7 +10,7 @@ import uuid
 from typing import List, Optional, Callable, Dict
 from .adb_manager import ADBManager, DeviceInfo
 from .device_monitor import DeviceMonitor
-from .build_options import ENABLE_SIMULATED_DEVICE
+from .build_options import ENABLE_SIMULATED_DEVICE, SIMULATED_DEVICE_STATUS_OPTIONS
 
 
 class AuthenticationManager:
@@ -232,12 +232,10 @@ class AuthenticationManager:
             raise RuntimeError("模拟设备功能未启用")
 
         status_input = (status or "").strip().lower()
-        status_map = {
-            "pirated": "Pirated",
-            "authorized": "Authorized",
-            "unauthorized": "Unauthorized",
-        }
+        status_map = {item.lower(): item for item in SIMULATED_DEVICE_STATUS_OPTIONS}
         normalized_status = status_map.get(status_input, "Unauthorized")
+        if status_input and status_input not in status_map:
+            logging.warning(f"收到未知模拟设备状态，已回退为Unauthorized: {status}")
 
         with self._simulated_lock:
             self._simulated_counter += 1
