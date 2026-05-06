@@ -21,12 +21,13 @@ class AuthenticationManager:
 
         # 自动授权功能
         self._auto_activation_enabled = self.device_monitor.config.getboolean('General', 'auto_activation_enabled', False)
-        self._activate_queue: queue.Queue[str] = queue.Queue()
+        self._activate_queue: queue.Queue[Optional[str]] = queue.Queue()
         self._queued_serials = set()
         self._in_progress_serials = set()
         self._queue_lock = threading.Lock()
         self._worker_running = False
         self._worker_thread = None
+        self._stop_event = threading.Event()
 
         # 始终注册回调，是否入队由开关控制
         self.device_monitor.device_parser.add_callback('unauthorized_ready', self._on_unauthorized_ready)
@@ -75,18 +76,27 @@ class AuthenticationManager:
             logging.error(f"补齐自动授权队列失败: {e}")
 
     def stop(self):
-        """停止后台线程"""
+        """停止后台线程，确保 worker 完全退出后才返回"""
         if not self._worker_running:
             return
         self._worker_running = False
+        self._stop_event.set()
         # 发送哨兵值，快速唤醒队列阻塞
         self._activate_queue.put(None)
-        if self._worker_thread:
-            self._worker_thread.join(timeout=2.0)
+        if self._worker_thread and self._worker_thread.is_alive():
+            # 30s timeout: single authentication (ADB sign + activate) can take up to ~20s
+            self._worker_thread.join(timeout=30.0)
+            if self._worker_thread.is_alive():
+                logging.warning("worker 线程在超时内未能完全退出")
 
     def _start_activate_worker(self):
+        # 若旧线程仍存活（stop() 尚未完全返回或超时），拒绝启动第二个 worker
+        if self._worker_thread and self._worker_thread.is_alive():
+            logging.warning("上一个 worker 线程仍在运行，拒绝启动新线程")
+            return
         if self._worker_running:
             return
+        self._stop_event.clear()
         self._worker_running = True
         self._worker_thread = threading.Thread(target=self._activate_worker_loop, daemon=True)
         self._worker_thread.start()
@@ -133,16 +143,17 @@ class AuthenticationManager:
             return False
 
     def _activate_worker_loop(self):
-        while self._worker_running:
+        while self._worker_running and not self._stop_event.is_set():
             serial = None
             try:
-                serial = self._activate_queue.get(timeout=0.5)
+                # 0.2s timeout keeps the stop-event check responsive without significant CPU overhead
+                serial = self._activate_queue.get(timeout=0.2)
             except queue.Empty:
                 continue
 
-            # 停止哨兵
+            # 停止哨兵 — break 退出循环
             if serial is None:
-                continue
+                break
 
             serial = str(serial)
             with self._queue_lock:
@@ -175,9 +186,10 @@ class AuthenticationManager:
                 else:
                     logging.warning(f"自动授权失败: {serial}, {result.get('message', '')}")
 
-                # 自动授权后自动刷新Cube和Target Device
-                self.device_monitor.refresh_all_cube()
-                self.device_monitor.refresh_all_device()
+                # 自动授权后刷新 Cube 和 Target Device（仅在未停止时执行）
+                if self._worker_running and not self._stop_event.is_set():
+                    self.device_monitor.refresh_all_cube()
+                    self.device_monitor.refresh_all_device()
             except Exception as e:
                 logging.error(f"自动授权执行异常: {serial}, {e}")
             finally:

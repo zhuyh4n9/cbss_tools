@@ -670,7 +670,7 @@ class AuthenticatorToolGUI:
             if not status_text:
                 status_text = "Checking..."
 
-            heading = "Activate" if (status_text == "Unauthorized" and self._is_uuid_ready(uuid_display) and not auto_enabled) else "N/A"
+            heading = "Activate" if (status_text.lower() == "unauthorized" and self._is_uuid_ready(uuid_display) and not auto_enabled) else "N/A"
             rows.append((
                 "serial:" + str(device.serial),
                 uuid_display,
