@@ -195,10 +195,10 @@ class AuthenticationManager:
                 else:
                     logging.warning(f"自动授权失败: {serial}, {result.get('message', '')}")
 
-                # 自动授权后刷新 Cube 和 Target Device（仅在未停止时执行）
+                # 自动授权后刷新 Cube 和当前 Target Device（仅在未停止时执行）
                 if self._worker_running and not self._stop_event.is_set():
                     self.device_monitor.refresh_all_cube()
-                    self.device_monitor.refresh_all_device()
+                    self.device_monitor.refresh_device(serial)
             except Exception as e:
                 logging.error(f"自动授权执行异常: {serial}, {e}")
             finally:
