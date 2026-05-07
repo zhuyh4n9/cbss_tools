@@ -34,6 +34,12 @@ class _FakeDeviceMonitor:
         self.refresh_all_device_calls += 1
 
 
+class _FailingRefreshDeviceMonitor(_FakeDeviceMonitor):
+    def refresh_all_cube(self):
+        super().refresh_all_cube()
+        raise RuntimeError("refresh failed")
+
+
 class _FakeAdbManager:
     def __init__(self, events=None):
         self.events = events if events is not None else []
@@ -109,10 +115,22 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         self.assertIn("verify_device_state", events)
         positions = {}
         for index, name in enumerate(events):
-            if name in ("activate_device", "refresh_all_cube", "verify_device_state") and name not in positions:
-                positions[name] = index
+            if name in ("activate_device", "refresh_all_cube", "verify_device_state"):
+                positions.setdefault(name, index)
         self.assertLess(positions["activate_device"], positions["refresh_all_cube"])
         self.assertLess(positions["refresh_all_cube"], positions["verify_device_state"])
+
+    def test_refresh_cube_error_does_not_break_authentication(self):
+        fake_monitor = _FailingRefreshDeviceMonitor()
+        fake_adb_manager = _FakeAdbManager()
+        manager = AuthenticationManager(adb_manager=fake_adb_manager, device_monitor=fake_monitor)
+
+        with self.assertLogs(level="WARNING") as log_output:
+            result = manager._perform_authentication("DEV-001", "CUBE-001")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(fake_monitor.refresh_all_cube_calls, 1)
+        self.assertTrue(any("激活后刷新Cube失败" in message for message in log_output.output))
 
 
 if __name__ == "__main__":
