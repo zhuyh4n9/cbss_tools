@@ -530,6 +530,7 @@ class AuthenticationManager:
             try:
                 self.device_monitor.refresh_all_cube()
             except Exception as refresh_error:
+                # 刷新仅用于尽快更新Cube快照，不应影响激活主流程结果
                 logging.warning(f"激活后刷新Cube失败: {refresh_error}")
 
             # 步骤4: 验证激活状态
