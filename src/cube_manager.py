@@ -38,11 +38,11 @@ class CubeManager:
         self._thread.start()
         logging.info("CubeManager 已启动")
 
-    def stop(self):
+    def stop(self, join_timeout: float = 2.0):
         self._running = False
         self._wake_event.set()
         if self._thread:
-            self._thread.join(timeout=2.0)
+            self._thread.join(timeout=max(float(join_timeout or 0), 0.0))
         logging.info("CubeManager 已停止")
 
     def add_callback(self, event_type: str, callback: Callable):

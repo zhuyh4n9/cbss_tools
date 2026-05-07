@@ -53,12 +53,12 @@ class DeviceParser:
         self._thread.start()
         logging.info("DeviceParser 已启动")
 
-    def stop(self):
+    def stop(self, join_timeout: float = 2.0, cube_join_timeout: float = 2.0):
         self._running = False
         self._wake_event.set()
         if self._thread:
-            self._thread.join(timeout=2.0)
-        self.cube_manager.stop()
+            self._thread.join(timeout=max(float(join_timeout or 0), 0.0))
+        self.cube_manager.stop(join_timeout=cube_join_timeout)
         logging.info("DeviceParser 已停止")
 
     def add_callback(self, event_type: str, callback: Callable):

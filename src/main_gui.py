@@ -325,12 +325,12 @@ class AuthenticatorToolGUI:
         self.network_monitor_thread.start()
         logging.info("Network monitoring started")
 
-    def stop_network_monitoring(self):
+    def stop_network_monitoring(self, join_timeout: float = 2.0):
         """Stop network monitoring thread"""
         if hasattr(self, 'network_monitor_stop'):
             self.network_monitor_stop.set()
         if hasattr(self, 'network_monitor_thread') and self.network_monitor_thread:
-            self.network_monitor_thread.join(timeout=2)
+            self.network_monitor_thread.join(timeout=max(float(join_timeout or 0), 0.0))
         logging.info("Network monitoring stopped")
 
     def _network_monitor_worker(self):
@@ -1733,13 +1733,17 @@ class AuthenticatorToolGUI:
         """关闭程序处理"""
         try:
             # 停止网络监控 (NEW in Update 4)
-            self.stop_network_monitoring()
+            self.stop_network_monitoring(join_timeout=0.5)
 
             # 停止自动授权工作线程
-            self.auth_manager.stop()
+            self.auth_manager.stop(join_timeout=1.0)
 
             # 停止设备监控
-            self.device_monitor.stop_monitoring()
+            self.device_monitor.stop_monitoring(
+                monitor_join_timeout=0.5,
+                parser_join_timeout=0.5,
+                cube_join_timeout=0.5,
+            )
 
             # 保存配置
             self.config_manager.save_config()

@@ -50,12 +50,20 @@ class DeviceMonitor:
         self._monitor_thread.start()
         logging.info("设备监控已启动")
 
-    def stop_monitoring(self):
+    def stop_monitoring(
+        self,
+        monitor_join_timeout: float = 2.0,
+        parser_join_timeout: float = 2.0,
+        cube_join_timeout: float = 2.0,
+    ):
         """停止设备监控"""
         self._running = False
         if self._monitor_thread:
-            self._monitor_thread.join(timeout=2.0)
-        self.device_parser.stop()
+            self._monitor_thread.join(timeout=max(float(monitor_join_timeout or 0), 0.0))
+        self.device_parser.stop(
+            join_timeout=parser_join_timeout,
+            cube_join_timeout=cube_join_timeout,
+        )
         logging.info("设备监控已停止")
 
     def _on_device_parser_update(self, devices: List[DeviceInfo]):
