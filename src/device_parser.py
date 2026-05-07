@@ -126,7 +126,9 @@ class DeviceParser:
                 if serial not in self._order:
                     self._order.append(serial)
                 if serial not in self._classify_queue:
-                    self._classify_queue.append(serial)
+                    self._classify_queue.insert(0, serial)
+                if serial not in self._await_queue and serial not in self._ready_queue and not self.cube_manager.has_cube(serial):
+                    self._await_queue[serial] = self._make_await_device(incoming[serial])
 
             # 更新已存在设备基础字段
             for serial in (new & current):
