@@ -4,11 +4,13 @@
 """
 import logging
 import queue
+import secrets
 import threading
 import time
-from typing import List, Optional, Callable
+from typing import List, Optional, Callable, Dict
 from .adb_manager import ADBManager, DeviceInfo
 from .device_monitor import DeviceMonitor
+from .build_options import ENABLE_SIMULATED_DEVICE, SIMULATED_DEVICE_STATUS_OPTIONS
 
 
 class AuthenticationManager:
@@ -28,6 +30,9 @@ class AuthenticationManager:
         self._worker_running = False
         self._worker_thread = None
         self._stop_event = threading.Event()
+        self._simulated_devices: Dict[str, DeviceInfo] = {}
+        self._simulated_counter = 0
+        self._simulated_lock = threading.Lock()
 
         # 始终注册回调，是否入队由开关控制
         self.device_monitor.device_parser.add_callback('unauthorized_ready', self._on_unauthorized_ready)
@@ -135,6 +140,9 @@ class AuthenticationManager:
     def _is_device_still_unauthorized(self, serial: str) -> bool:
         try:
             device = self.device_monitor.get_device_by_serial(serial)
+            if not device and self.is_simulated_device(serial):
+                with self._simulated_lock:
+                    device = self._simulated_devices.get(str(serial))
             if not device:
                 return False
             status = (device.status or "").strip().lower()
@@ -199,6 +207,87 @@ class AuthenticationManager:
     def is_authenticating(self) -> bool:
         """检查是否正在执行激活"""
         return self._is_authenticating
+
+    def is_simulated_device_enabled(self) -> bool:
+        """是否启用模拟设备功能（编译/打包选项）"""
+        return ENABLE_SIMULATED_DEVICE
+
+    def is_simulated_device(self, serial: str) -> bool:
+        serial = str(serial or "")
+        with self._simulated_lock:
+            return serial in self._simulated_devices
+
+    def get_simulated_devices(self) -> List[DeviceInfo]:
+        with self._simulated_lock:
+            return [
+                DeviceInfo(
+                    serial=device.serial,
+                    status=device.status,
+                    device_type=device.device_type,
+                    uuid=device.uuid,
+                    usb_port=device.usb_port
+                )
+                for device in self._simulated_devices.values()
+            ]
+
+    def add_simulated_device(self, status: str) -> DeviceInfo:
+        if not self.is_simulated_device_enabled():
+            raise RuntimeError("模拟设备功能未启用")
+
+        status_input = (status or "").strip().lower()
+        status_map = {item.lower(): item for item in SIMULATED_DEVICE_STATUS_OPTIONS}
+        normalized_status = status_map.get(status_input, "Unauthorized")
+        if status_input and status_input not in status_map:
+            logging.warning(f"收到未知模拟设备状态，已回退为Unauthorized: {status}")
+
+        with self._simulated_lock:
+            self._simulated_counter += 1
+            serial = f"SIM-{self._simulated_counter:04d}"
+            device = DeviceInfo(
+                serial=serial,
+                status=normalized_status,
+                device_type="target_device",
+                uuid=secrets.token_hex(32),
+                usb_port="SIM"
+            )
+            self._simulated_devices[serial] = device
+
+        if self._auto_activation_enabled and (device.status or "").strip().lower() == "unauthorized" and device.uuid:
+            self._on_unauthorized_ready(device)
+
+        return DeviceInfo(
+            serial=device.serial,
+            status=device.status,
+            device_type=device.device_type,
+            uuid=device.uuid,
+            usb_port=device.usb_port
+        )
+
+    def _activate_simulated_device(self, serial: str) -> dict:
+        with self._simulated_lock:
+            device = self._simulated_devices.get(str(serial))
+            if not device:
+                return {
+                    'success': False,
+                    'message': f'模拟设备不存在: {serial}',
+                    'details': ''
+                }
+
+            status = (device.status or "").strip().lower()
+            if status != "unauthorized":
+                return {
+                    'success': False,
+                    'message': f'模拟设备状态非Unauthorized，无法激活: {device.status}',
+                    'details': ''
+                }
+
+            device.status = "Authorized"
+
+        return {
+            'success': True,
+            'message': f'设备激活成功: {serial}',
+            'details': '模拟设备已从Unauthorized切换为Authorized'
+        }
 
     def authenticate_device(self, device_serial: str, authenticator_serial: str,
                           progress_callback: Optional[Callable] = None) -> dict:
@@ -309,6 +398,65 @@ class AuthenticationManager:
         """执行单个设备的激活流程"""
         try:
             logging.info(f"开始激活设备: {device_serial}")
+
+            if self.is_simulated_device(device_serial):
+                if progress_callback:
+                    progress_callback("正在准备模拟设备认证...")
+
+                with self._simulated_lock:
+                    simulated_device = self._simulated_devices.get(str(device_serial))
+
+                if not simulated_device:
+                    return {
+                        'success': False,
+                        'message': f'模拟设备不存在: {device_serial}',
+                        'details': ''
+                    }
+
+                device_uuid = (simulated_device.uuid or "").strip()
+                if not device_uuid:
+                    return {
+                        'success': False,
+                        'message': "设备UUID为空",
+                        'details': ''
+                    }
+
+                if progress_callback:
+                    progress_callback("正在使用激活盒子签名...")
+
+                sign_result = self.adb_manager.authenticator_sign(authenticator_serial, device_uuid)
+                if not sign_result.success:
+                    error_msg = f"激活盒子签名失败: {sign_result.error_message}"
+                    logging.error(error_msg)
+                    return {
+                        'success': False,
+                        'message': error_msg,
+                        'details': sign_result.raw_output
+                    }
+
+                signature = (sign_result.result_data or "").strip()
+                if not signature:
+                    error_msg = "签名结果为空"
+                    logging.error(error_msg)
+                    return {
+                        'success': False,
+                        'message': error_msg,
+                        'details': sign_result.raw_output
+                    }
+
+                if progress_callback:
+                    progress_callback("正在激活模拟设备...")
+
+                simulated_activate_result = self._activate_simulated_device(device_serial)
+                if not simulated_activate_result.get('success'):
+                    return simulated_activate_result
+
+                success_msg = f"设备激活成功: {device_serial}"
+                return {
+                    'success': True,
+                    'message': success_msg,
+                    'details': f"UUID: {device_uuid}\n签名: {signature}\n状态: 已激活(模拟设备)"
+                }
 
             # 步骤1: 获取设备UUID
             if progress_callback:
@@ -429,6 +577,9 @@ class AuthenticationManager:
         """获取未激活设备列表"""
         unauthorized_devices = []
         for device in self.device_monitor.get_ready_devices():
+            if (device.status or "").strip().lower() == "unauthorized" and device.uuid:
+                unauthorized_devices.append(device)
+        for device in self.get_simulated_devices():
             if (device.status or "").strip().lower() == "unauthorized" and device.uuid:
                 unauthorized_devices.append(device)
         return unauthorized_devices

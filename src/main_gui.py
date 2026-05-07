@@ -17,6 +17,7 @@ from .adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
 from .device_monitor import DeviceMonitor
 from .auth_manager import AuthenticationManager
 from .prompt_manager import PromptManager
+from .build_options import SIMULATED_DEVICE_STATUS_OPTIONS
 from .diaglog import (
     LogLevelDialog,
     LogViewDialog,
@@ -252,6 +253,13 @@ class AuthenticatorToolGUI:
         self.refresh_button.pack(side=tk.LEFT, padx=(0,5))
         self.activate_all_button = ttk.Button(button_frame, text=self.prompt_mgr.get('UI.activate_all_btn'), command=self.authenticate_all_devices)
         self.activate_all_button.pack(side=tk.LEFT)
+        if self.auth_manager.is_simulated_device_enabled():
+            self.add_simulated_device_button = ttk.Button(
+                button_frame,
+                text=self.prompt_mgr.get('UI.add_simulated_device_btn'),
+                command=self.show_add_simulated_device_dialog
+            )
+            self.add_simulated_device_button.pack(side=tk.LEFT, padx=(5, 0))
         device_columns = (
             self.prompt_mgr.get('DeviceTable.col_serial'),
             self.prompt_mgr.get('DeviceTable.col_uuid'),
@@ -652,11 +660,20 @@ class AuthenticatorToolGUI:
 
     def update_device_display(self, devices: List[DeviceInfo]):
         """更新设备显示"""
-        logging.debug(f"Updating device display with {len(devices)} devices")
+        all_devices = list(devices or [])
+        if self.auth_manager.is_simulated_device_enabled():
+            all_devices.extend(self.auth_manager.get_simulated_devices())
+
+        logging.debug(f"Updating device display with {len(all_devices)} devices")
         show_na_devices = self.config_manager.getboolean('UI', 'show_na_devices', False)
         auto_enabled = self.auth_manager.is_auto_activation_enabled()
         rows = []
-        for device in devices:
+        seen_serials = set()
+        for device in all_devices:
+            if device.serial in seen_serials:
+                continue
+            seen_serials.add(device.serial)
+
             if device.device_type == "unknown" and not show_na_devices:
                 continue
 
@@ -1373,6 +1390,43 @@ class AuthenticatorToolGUI:
         value = (uuid_text or "").strip()
         return value not in ("", "-", "获取中...", "Checking...")
 
+    def show_add_simulated_device_dialog(self):
+        """显示添加模拟设备弹窗"""
+        if not self.auth_manager.is_simulated_device_enabled():
+            messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self.prompt_mgr.get('Errors.simulated_device_disabled'))
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(self.prompt_mgr.get('Dialogs.add_simulated_device_title'))
+        dialog.geometry("380x180")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        ttk.Label(dialog, text=self.prompt_mgr.get('Dialogs.simulated_device_status_label'), font=('Arial', 10)).pack(pady=(20, 10))
+
+        status_var = tk.StringVar(value="Unauthorized")
+        status_combo = ttk.Combobox(
+            dialog,
+            textvariable=status_var,
+            values=list(SIMULATED_DEVICE_STATUS_OPTIONS),
+            state="readonly",
+            width=30
+        )
+        status_combo.pack(pady=5)
+
+        def on_confirm():
+            try:
+                status = status_var.get().strip()
+                self.auth_manager.add_simulated_device(status)
+                self.update_device_display(self.device_monitor.target_devices)
+                self.status_var.set(self.prompt_mgr.format('InfoMessages.simulated_device_added', status=status))
+                dialog.destroy()
+            except Exception as e:
+                messagebox.showerror(self.prompt_mgr.get('Common.error_title'), self.prompt_mgr.format('Errors.unknown_error', msg=str(e)))
+
+        ttk.Button(dialog, text=self.prompt_mgr.get('Buttons.ok'), command=on_confirm).pack(pady=(15, 5))
+        ttk.Button(dialog, text=self.prompt_mgr.get('Buttons.cancel'), command=dialog.destroy).pack(pady=5)
+
     def _get_uuid_by_serial_from_tree(self, device_serial: str) -> str:
         """从设备表格中按serial获取UUID显示值"""
         target = f"serial:{device_serial}"
@@ -1422,16 +1476,16 @@ class AuthenticatorToolGUI:
             messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self.prompt_mgr.get('Errors.operation_in_progress'))
             return
 
-        # 获取可用的激活盒子
-        authenticators = list(self.device_monitor.authenticators.keys())
-        if not authenticators:
-            messagebox.showerror(self.prompt_mgr.get('Common.error_title'), self.prompt_mgr.get('Validation.no_available_authenticator'))
-            return
-
         # 获取未激活设备
         unauthorized_devices = self.auth_manager.get_unauthorized_devices()
         if not unauthorized_devices:
             messagebox.showinfo(self.prompt_mgr.get('Common.info_title'), self.prompt_mgr.get('Validation.no_need_activation'))
+            return
+
+        # 获取可用的激活盒子
+        authenticators = list(self.device_monitor.authenticators.keys())
+        if not authenticators:
+            messagebox.showerror(self.prompt_mgr.get('Common.error_title'), self.prompt_mgr.get('Validation.no_available_authenticator'))
             return
 
         # UUID未获取完成的设备不允许进入批量激活

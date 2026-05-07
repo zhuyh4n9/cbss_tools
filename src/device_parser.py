@@ -293,10 +293,10 @@ class DeviceParser:
                                 # 移交给CubeManager管理
                                 transfer_to_cube = True
                             else:
-                                # 新设备按target处理，进入await
-                                base.device_type = "target_device"
-                                if classify_serial not in self._ready_queue and classify_serial not in self._await_queue:
-                                    self._await_queue[classify_serial] = self._make_await_device(base)
+                                # 无法识别的设备标记为unknown并从UI队列移除
+                                self._base_devices[classify_serial] = self._make_unknown_device(base)
+                                self._await_queue.pop(classify_serial, None)
+                                self._ready_queue.pop(classify_serial, None)
                                 transfer_to_cube = False
 
                     if snapshot and snapshot.success and transfer_to_cube:
