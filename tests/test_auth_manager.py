@@ -94,7 +94,7 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         self.assertEqual(fake_monitor.refresh_device_calls, [manager.TEST_SERIAL])
         self.assertEqual(fake_monitor.refresh_all_device_calls, 0)
 
-    def test_perform_authentication_refreshes_cube_immediately_after_activate(self):
+    def test_refresh_cube_after_activation(self):
         events = []
         fake_monitor = _FakeDeviceMonitor(events=events)
         fake_adb_manager = _FakeAdbManager(events=events)
@@ -107,8 +107,9 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         self.assertIn("activate_device", events)
         self.assertIn("refresh_all_cube", events)
         self.assertIn("verify_device_state", events)
-        self.assertLess(events.index("activate_device"), events.index("refresh_all_cube"))
-        self.assertLess(events.index("refresh_all_cube"), events.index("verify_device_state"))
+        positions = {name: events.index(name) for name in ("activate_device", "refresh_all_cube", "verify_device_state")}
+        self.assertLess(positions["activate_device"], positions["refresh_all_cube"])
+        self.assertLess(positions["refresh_all_cube"], positions["verify_device_state"])
 
 
 if __name__ == "__main__":
