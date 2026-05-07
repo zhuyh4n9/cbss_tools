@@ -527,6 +527,10 @@ class AuthenticationManager:
                 }
 
             logging.info(f"设备激活成功: {device_serial}")
+            try:
+                self.device_monitor.refresh_all_cube()
+            except Exception as refresh_error:
+                logging.warning(f"激活后刷新Cube失败: {refresh_error}")
 
             # 步骤4: 验证激活状态
             if progress_callback:
