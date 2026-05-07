@@ -31,19 +31,30 @@ class _FakeDeviceMonitor:
         self.refresh_all_device_calls += 1
 
 
+class _FakeAdbManager:
+    pass
+
+
+class _TestableAuthenticationManager(AuthenticationManager):
+    def _is_device_still_unauthorized(self, serial: str) -> bool:
+        return True
+
+    def _pick_authenticator(self):
+        return "CUBE-001"
+
+    def _run_authentication(self, device_serial: str, authenticator_serial: str, progress_callback=None) -> dict:
+        return {"success": True}
+
+
 class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
     def test_auto_activation_refreshes_only_current_device(self):
         fake_monitor = _FakeDeviceMonitor()
-        manager = AuthenticationManager(adb_manager=object(), device_monitor=fake_monitor)
+        manager = _TestableAuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=fake_monitor)
 
         manager._worker_running = True
         manager._stop_event.clear()
         manager._activate_queue.put("DEV-001")
         manager._activate_queue.put(None)
-
-        manager._is_device_still_unauthorized = lambda serial: True
-        manager._pick_authenticator = lambda: "CUBE-001"
-        manager._run_authentication = lambda serial, auth_serial: {"success": True}
 
         manager._activate_worker_loop()
 
