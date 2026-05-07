@@ -10,7 +10,7 @@ class _FakeConfig:
 
 class _FakeDeviceParser:
     def add_callback(self, event_type, callback):
-        self._unused_callback = (event_type, callback)
+        self._registered_callback = (event_type, callback)
 
 
 class _FakeDeviceMonitor:
@@ -41,13 +41,13 @@ class _TestableAuthenticationManager(AuthenticationManager):
         self._unauthorized_serials = {"DEV-001"}
 
     def _is_device_still_unauthorized(self, serial: str) -> bool:
-        return str(serial) in self._unauthorized_serials
+        return serial in self._unauthorized_serials
 
     def _pick_authenticator(self):
         return "CUBE-001"
 
     def _run_authentication(self, device_serial: str, authenticator_serial: str, progress_callback=None) -> dict:
-        self._unauthorized_serials.discard(str(device_serial))
+        self._unauthorized_serials.discard(device_serial)
         return {"success": True}
 
 
