@@ -107,7 +107,10 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         self.assertIn("activate_device", events)
         self.assertIn("refresh_all_cube", events)
         self.assertIn("verify_device_state", events)
-        positions = {name: events.index(name) for name in ("activate_device", "refresh_all_cube", "verify_device_state")}
+        positions = {}
+        for index, name in enumerate(events):
+            if name in ("activate_device", "refresh_all_cube", "verify_device_state") and name not in positions:
+                positions[name] = index
         self.assertLess(positions["activate_device"], positions["refresh_all_cube"])
         self.assertLess(positions["refresh_all_cube"], positions["verify_device_state"])
 
