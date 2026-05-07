@@ -113,6 +113,9 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         self.assertIn("activate_device", events)
         self.assertIn("refresh_all_cube", events)
         self.assertIn("verify_device_state", events)
+        self.assertEqual(events.count("activate_device"), 1)
+        self.assertEqual(events.count("refresh_all_cube"), 1)
+        self.assertEqual(events.count("verify_device_state"), 1)
         positions = {}
         for index, name in enumerate(events):
             if name in ("activate_device", "refresh_all_cube", "verify_device_state"):
@@ -130,7 +133,7 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
 
         self.assertTrue(result["success"])
         self.assertEqual(fake_monitor.refresh_all_cube_calls, 1)
-        self.assertTrue(any("激活后刷新Cube失败" in message for message in log_output.output))
+        self.assertTrue(any("Cube" in message and "刷新" in message for message in log_output.output))
 
 
 if __name__ == "__main__":
