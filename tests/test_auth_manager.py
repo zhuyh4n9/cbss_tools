@@ -104,6 +104,9 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
 
         self.assertTrue(result["success"])
         self.assertEqual(fake_monitor.refresh_all_cube_calls, 1)
+        self.assertIn("activate_device", events)
+        self.assertIn("refresh_all_cube", events)
+        self.assertIn("verify_device_state", events)
         self.assertLess(events.index("activate_device"), events.index("refresh_all_cube"))
         self.assertLess(events.index("refresh_all_cube"), events.index("verify_device_state"))
 
