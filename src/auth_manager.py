@@ -80,7 +80,7 @@ class AuthenticationManager:
         except Exception as e:
             logging.error(f"补齐自动授权队列失败: {e}")
 
-    def stop(self):
+    def stop(self, join_timeout: float = 30.0):
         """停止后台线程，确保 worker 完全退出后才返回"""
         if not self._worker_running:
             return
@@ -89,8 +89,7 @@ class AuthenticationManager:
         # 发送哨兵值，快速唤醒队列阻塞
         self._activate_queue.put(None)
         if self._worker_thread and self._worker_thread.is_alive():
-            # 30s timeout: single authentication (ADB sign + activate) can take up to ~20s
-            self._worker_thread.join(timeout=30.0)
+            self._worker_thread.join(timeout=max(float(join_timeout or 0), 0.0))
             if self._worker_thread.is_alive():
                 logging.warning("worker 线程在超时内未能完全退出")
 
