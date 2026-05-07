@@ -10,7 +10,7 @@ class _FakeConfig:
 
 class _FakeDeviceParser:
     def add_callback(self, event_type, callback):
-        self._registered_callback = (event_type, callback)
+        pass
 
 
 class _FakeDeviceMonitor:
@@ -36,9 +36,11 @@ class _FakeAdbManager:
 
 
 class _TestableAuthenticationManager(AuthenticationManager):
+    TEST_SERIAL = "DEV-001"
+
     def __init__(self, adb_manager, device_monitor):
         super().__init__(adb_manager, device_monitor)
-        self._unauthorized_serials = {"DEV-001"}
+        self._unauthorized_serials = {self.TEST_SERIAL}
 
     def _is_device_still_unauthorized(self, serial: str) -> bool:
         return serial in self._unauthorized_serials
@@ -58,13 +60,13 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
 
         manager._worker_running = True
         manager._stop_event.clear()
-        manager._activate_queue.put("DEV-001")
+        manager._activate_queue.put(manager.TEST_SERIAL)
         manager._activate_queue.put(None)
 
         manager._activate_worker_loop()
 
         self.assertEqual(fake_monitor.refresh_all_cube_calls, 1)
-        self.assertEqual(fake_monitor.refresh_device_calls, ["DEV-001"])
+        self.assertEqual(fake_monitor.refresh_device_calls, [manager.TEST_SERIAL])
         self.assertEqual(fake_monitor.refresh_all_device_calls, 0)
 
 
