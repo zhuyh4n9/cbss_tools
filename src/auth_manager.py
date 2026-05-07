@@ -11,6 +11,7 @@ from typing import List, Optional, Callable, Dict
 from .adb_manager import ADBManager, DeviceInfo
 from .device_monitor import DeviceMonitor
 from .build_options import ENABLE_SIMULATED_DEVICE, SIMULATED_DEVICE_STATUS_OPTIONS
+from .target_device import AC8267Device, ITargetDevice, SimulatorDevice
 
 
 class AuthenticationManager:
@@ -30,7 +31,7 @@ class AuthenticationManager:
         self._worker_running = False
         self._worker_thread = None
         self._stop_event = threading.Event()
-        self._simulated_devices: Dict[str, DeviceInfo] = {}
+        self._simulated_devices: Dict[str, SimulatorDevice] = {}
         self._simulated_counter = 0
         self._simulated_lock = threading.Lock()
 
@@ -141,7 +142,8 @@ class AuthenticationManager:
             device = self.device_monitor.get_device_by_serial(serial)
             if not device and self.is_simulated_device(serial):
                 with self._simulated_lock:
-                    device = self._simulated_devices.get(str(serial))
+                    simulated = self._simulated_devices.get(str(serial))
+                    device = simulated.to_device_info() if simulated else None
             if not device:
                 return False
             status = (device.status or "").strip().lower()
@@ -218,16 +220,7 @@ class AuthenticationManager:
 
     def get_simulated_devices(self) -> List[DeviceInfo]:
         with self._simulated_lock:
-            return [
-                DeviceInfo(
-                    serial=device.serial,
-                    status=device.status,
-                    device_type=device.device_type,
-                    uuid=device.uuid,
-                    usb_port=device.usb_port
-                )
-                for device in self._simulated_devices.values()
-            ]
+            return [device.to_device_info() for device in self._simulated_devices.values()]
 
     def add_simulated_device(self, status: str) -> DeviceInfo:
         if not self.is_simulated_device_enabled():
@@ -242,25 +235,19 @@ class AuthenticationManager:
         with self._simulated_lock:
             self._simulated_counter += 1
             serial = f"SIM-{self._simulated_counter:04d}"
-            device = DeviceInfo(
-                serial=serial,
+            device = ITargetDevice.CreateSimulation(
                 status=normalized_status,
-                device_type="target_device",
-                uuid=secrets.token_hex(32),
-                usb_port="SIM"
+                serial_number=serial,
+                uuid=secrets.token_hex(32)
             )
+            if not isinstance(device, SimulatorDevice):
+                raise RuntimeError("模拟设备创建失败")
             self._simulated_devices[serial] = device
 
-        if self._auto_activation_enabled and (device.status or "").strip().lower() == "unauthorized" and device.uuid:
-            self._on_unauthorized_ready(device)
+        if self._auto_activation_enabled and (device.getStatus() or "").strip().lower() == "unauthorized" and device.getUuid():
+            self._on_unauthorized_ready(device.to_device_info())
 
-        return DeviceInfo(
-            serial=device.serial,
-            status=device.status,
-            device_type=device.device_type,
-            uuid=device.uuid,
-            usb_port=device.usb_port
-        )
+        return device.to_device_info()
 
     def _activate_simulated_device(self, serial: str) -> dict:
         with self._simulated_lock:
@@ -272,15 +259,21 @@ class AuthenticationManager:
                     'details': ''
                 }
 
-            status = (device.status or "").strip().lower()
+            status = (device.getStatus() or "").strip().lower()
             if status != "unauthorized":
                 return {
                     'success': False,
-                    'message': f'模拟设备状态非Unauthorized，无法激活: {device.status}',
+                    'message': f'模拟设备状态非Unauthorized，无法激活: {device.getStatus()}',
                     'details': ''
                 }
 
-            device.status = "Authorized"
+            activate_result = device.activate("simulated-signature")
+            if not activate_result.success:
+                return {
+                    'success': False,
+                    'message': activate_result.error_message or '模拟设备激活失败',
+                    'details': activate_result.raw_output
+                }
 
         return {
             'success': True,
@@ -412,7 +405,7 @@ class AuthenticationManager:
                         'details': ''
                     }
 
-                device_uuid = (simulated_device.uuid or "").strip()
+                device_uuid = (simulated_device.getUuid() or "").strip()
                 if not device_uuid:
                     return {
                         'success': False,
@@ -513,7 +506,13 @@ class AuthenticationManager:
             if progress_callback:
                 progress_callback("正在激活设备...")
 
-            activate_result = self.adb_manager.activate_device(device_serial, signature)
+            target_device = AC8267Device(
+                serial_number=device_serial,
+                adb_manager=self.adb_manager,
+                uuid=device_uuid,
+                status="Unauthorized"
+            )
+            activate_result = target_device.activate(signature)
             if not activate_result.success:
                 error_msg = f"设备激活失败: {activate_result.error_message}"
                 logging.error(error_msg)

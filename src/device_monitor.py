@@ -20,6 +20,9 @@ class DeviceMonitor:
         self.target_devices: List[DeviceInfo] = []
         self.unknown_devices: List[DeviceInfo] = []
         self._connected_index: Dict[str, DeviceInfo] = {}
+        self._device_sources: Dict[str, Callable[[], List[DeviceInfo]]] = {
+            'Adb': self.adb_manager.get_connected_devices
+        }
 
         self.device_parser = DeviceParser(self.adb_manager)
         self.device_parser.add_callback('device_update', self._on_device_parser_update)
@@ -79,6 +82,11 @@ class DeviceMonitor:
         """兼容回调：当前由authenticator_update承载完整数据"""
         return
 
+    def register_device_source(self, source_name: str, source_getter: Callable[[], List[DeviceInfo]]):
+        """注册设备来源（当前默认支持ADB，可扩展UART等）"""
+        name = str(source_name or "").strip() or "Unknown"
+        self._device_sources[name] = source_getter
+
     def add_callback(self, event_type: str, callback: Callable):
         """添加回调函数"""
         if event_type in self._callbacks:
@@ -120,8 +128,13 @@ class DeviceMonitor:
         """更新设备信息"""
         try:
             logging.debug("正在更新设备信息...")
-            # 获取连接的设备列表
-            devices = self.adb_manager.get_connected_devices()
+            devices = []
+            for source_name, source_getter in self._device_sources.items():
+                source_devices = source_getter() or []
+                for device in source_devices:
+                    if not device.detection_method:
+                        device.detection_method = source_name
+                devices.extend(source_devices)
             # 设备监控仅负责插拔同步，设备类型辨别与目标设备解析由device_parser负责
             new_connected_index = {d.serial: d for d in devices}
             self._connected_index = new_connected_index
