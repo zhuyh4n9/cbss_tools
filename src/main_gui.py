@@ -1736,14 +1736,10 @@ class AuthenticatorToolGUI:
             self.stop_network_monitoring(join_timeout=0.5)
 
             # 停止自动授权工作线程
-            self.auth_manager.stop(join_timeout=1.0)
+            self.auth_manager.stop(join_timeout=5.0)
 
             # 停止设备监控
-            self.device_monitor.stop_monitoring(
-                monitor_join_timeout=0.5,
-                parser_join_timeout=0.5,
-                cube_join_timeout=0.5,
-            )
+            self.device_monitor.stop_monitoring(join_timeout=0.5)
 
             # 保存配置
             self.config_manager.save_config()
