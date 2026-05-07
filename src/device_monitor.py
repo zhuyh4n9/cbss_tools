@@ -5,6 +5,7 @@
 import threading
 import time
 import logging
+import copy
 from typing import List, Dict, Callable, Optional
 from datetime import datetime, timedelta
 from .adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
@@ -132,9 +133,10 @@ class DeviceMonitor:
             for source_name, source_getter in self._device_sources.items():
                 source_devices = source_getter() or []
                 for device in source_devices:
-                    if not device.detection_method:
-                        device.detection_method = source_name
-                devices.extend(source_devices)
+                    copied = copy.deepcopy(device)
+                    if not copied.detection_method:
+                        copied.detection_method = source_name
+                    devices.append(copied)
             # 设备监控仅负责插拔同步，设备类型辨别与目标设备解析由device_parser负责
             new_connected_index = {d.serial: d for d in devices}
             self._connected_index = new_connected_index

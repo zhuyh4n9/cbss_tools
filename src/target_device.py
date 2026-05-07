@@ -10,9 +10,9 @@ SUPPORTED_TARGET_STATUSES = {"authorized", "unauthorized", "pirated", "unknown"}
 
 
 def _normalize_status(status: str) -> str:
-    value = (status or "").strip().lower()
-    if value in SUPPORTED_TARGET_STATUSES:
-        return value.capitalize()
+    normalized_status = (status or "").strip().lower()
+    if normalized_status in SUPPORTED_TARGET_STATUSES:
+        return normalized_status.capitalize()
     return "Unknown"
 
 
@@ -133,9 +133,10 @@ class TargetDeviceAbstract(ITargetDevice, ABC):
         device_type = "unknown"
         if isinstance(self, (AC8267Device, SimulatorDevice)):
             device_type = "target_device"
+        display_status = (self.status or "").strip() or self.getStatus()
         return DeviceInfo(
             serial=self.getSerialNumber(),
-            status=self.getStatus(),
+            status=display_status,
             device_type=device_type,
             uuid=self.getUuid() if device_type != "unknown" else "",
             usb_port=self.getConnectedUsbPort(),

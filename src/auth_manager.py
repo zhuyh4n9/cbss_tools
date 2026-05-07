@@ -506,12 +506,16 @@ class AuthenticationManager:
             if progress_callback:
                 progress_callback("正在激活设备...")
 
-            target_device = AC8267Device(
-                serial_number=device_serial,
-                adb_manager=self.adb_manager,
-                uuid=device_uuid,
-                status="Unauthorized"
-            )
+            target_device = ITargetDevice.CreateAdbDevice(device_serial, self.adb_manager)
+            if not isinstance(target_device, AC8267Device):
+                target_device = AC8267Device(
+                    serial_number=device_serial,
+                    adb_manager=self.adb_manager,
+                    uuid=device_uuid,
+                    status="Unknown"
+                )
+            if not target_device.getUuid():
+                target_device.setUuid(device_uuid)
             activate_result = target_device.activate(signature)
             if not activate_result.success:
                 error_msg = f"设备激活失败: {activate_result.error_message}"
