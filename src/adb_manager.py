@@ -30,6 +30,8 @@ class DeviceInfo:
     device_type: str = "unknown"  # authenticator, target_device, unknown
     uuid: str = ""
     usb_port: str = ""
+    detection_method: str = "Unknown"
+    is_simulation: bool = False
 
 
 @dataclass
@@ -175,7 +177,12 @@ class ADBManager:
                             parts.append(part)
                     if len(parts) >= 2:
                         serial = parts[0]
-                        devices.append(DeviceInfo(serial=serial, status=""))
+                        usb_port = ""
+                        for part in parts[1:]:
+                            if part.startswith('usb:'):
+                                usb_port = part.split(':', 1)[1].strip()
+                                break
+                        devices.append(DeviceInfo(serial=serial, status="", usb_port=usb_port, detection_method="Adb"))
             return devices
 
         except Exception as e:
