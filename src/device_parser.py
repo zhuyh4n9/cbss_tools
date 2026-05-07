@@ -10,8 +10,9 @@ import time
 from typing import Callable, Dict, List
 
 from .adb_manager import ADBManager, DeviceInfo
+from .device_classification_strategy import DeviceClassificationStrategy
 from .cube_manager import CubeManager
-from .target_device import AC8267Device, ITargetDevice, TargetDeviceAbstract, UnknownAdbDevice, UnknownDevice
+from .target_device import TargetDeviceAbstract, UnknownAdbDevice, UnknownDevice
 
 
 class DeviceParser:
@@ -23,6 +24,7 @@ class DeviceParser:
         self._base_devices: Dict[str, TargetDeviceAbstract] = {}
         self._classify_queue: List[str] = []
         self._order: List[str] = []
+        self._classification_strategy = DeviceClassificationStrategy(self.adb_manager)
 
         self.cube_manager = CubeManager(self.adb_manager)
         self.cube_manager.add_callback('authenticator_update', self._on_cube_update)
@@ -261,8 +263,6 @@ class DeviceParser:
             try:
                 classify_serial = self._next_classify_serial()
                 if classify_serial:
-                    transfer_to_cube = False
-                    snapshot = None
                     known_cube = self.cube_manager.has_cube(classify_serial)
 
                     with self._lock:
@@ -270,16 +270,7 @@ class DeviceParser:
                     if not base:
                         continue
 
-                    detected_device = None
-                    if not known_cube and base.getDetectionMethod().lower() == "adb" and not base.is_simulation:
-                        detected_device = ITargetDevice.CreateAdbDevice(
-                            serial_number=classify_serial,
-                            adb_manager=self.adb_manager,
-                            usb_port=base.getConnectedUsbPort(),
-                        )
-
-                    if not known_cube and isinstance(detected_device, UnknownAdbDevice):
-                        snapshot = self.adb_manager.get_authenticator_snapshot(classify_serial)
+                    decision = self._classification_strategy.classify_device(classify_serial, base, known_cube)
 
                     with self._lock:
                         base = self._base_devices.get(classify_serial)
@@ -288,21 +279,20 @@ class DeviceParser:
                         if known_cube:
                             self._await_queue.pop(classify_serial, None)
                             self._ready_queue.pop(classify_serial, None)
-                        elif isinstance(detected_device, AC8267Device):
+                        elif decision.ready_device is not None and not isinstance(decision.ready_device, UnknownAdbDevice):
                             self._await_queue.pop(classify_serial, None)
-                            self._ready_queue[classify_serial] = detected_device
+                            self._ready_queue[classify_serial] = decision.ready_device
                         else:
-                            if snapshot and snapshot.success:
+                            if decision.should_add_cube:
                                 self._await_queue.pop(classify_serial, None)
                                 self._ready_queue.pop(classify_serial, None)
-                                transfer_to_cube = True
                             else:
-                                self._base_devices[classify_serial] = self._make_unknown_device(base)
+                                if decision.should_mark_unknown:
+                                    self._base_devices[classify_serial] = self._make_unknown_device(base)
                                 self._await_queue.pop(classify_serial, None)
                                 self._ready_queue.pop(classify_serial, None)
-                                transfer_to_cube = False
 
-                    if snapshot and snapshot.success and transfer_to_cube:
+                    if decision.should_add_cube:
                         self.cube_manager.add_cube(classify_serial)
 
                     self._notify_callbacks('device_update', self.get_devices())
@@ -319,14 +309,7 @@ class DeviceParser:
                 if not current:
                     continue
 
-                if current.getDetectionMethod().lower() == "adb" and not current.is_simulation:
-                    refreshed = ITargetDevice.CreateAdbDevice(
-                        serial_number=serial,
-                        adb_manager=self.adb_manager,
-                        usb_port=current.getConnectedUsbPort(),
-                    )
-                else:
-                    refreshed = current.clone()
+                refreshed = self._classification_strategy.refresh_await_device(serial, current)
 
                 with self._lock:
                     current = self._await_queue.get(serial)

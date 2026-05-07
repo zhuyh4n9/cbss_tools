@@ -5,11 +5,11 @@
 import threading
 import time
 import logging
-import copy
 from typing import List, Dict, Callable, Optional
 from datetime import datetime, timedelta
 from .adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
 from .device_parser import DeviceParser
+from .device_source import DeviceSource, AdbDeviceSource
 
 
 class DeviceMonitor:
@@ -21,8 +21,8 @@ class DeviceMonitor:
         self.target_devices: List[DeviceInfo] = []
         self.unknown_devices: List[DeviceInfo] = []
         self._connected_index: Dict[str, DeviceInfo] = {}
-        self._device_sources: Dict[str, Callable[[], List[DeviceInfo]]] = {
-            'Adb': self.adb_manager.get_connected_devices
+        self._device_sources: Dict[str, DeviceSource] = {
+            'Adb': AdbDeviceSource(self.adb_manager)
         }
 
         self.device_parser = DeviceParser(self.adb_manager)
@@ -48,6 +48,8 @@ class DeviceMonitor:
         """开始设备监控"""
         if self._running:
             return
+        for source in self._device_sources.values():
+            source.start()
         self.device_parser.start()
         self._running = True
         self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
@@ -59,6 +61,8 @@ class DeviceMonitor:
         self._running = False
         if self._monitor_thread:
             self._monitor_thread.join(timeout=max(float(join_timeout or 0), 0.0))
+        for source in self._device_sources.values():
+            source.stop()
         self.device_parser.stop(join_timeout=join_timeout)
         logging.info("设备监控已停止")
 
@@ -83,10 +87,12 @@ class DeviceMonitor:
         """兼容回调：当前由authenticator_update承载完整数据"""
         return
 
-    def register_device_source(self, source_name: str, source_getter: Callable[[], List[DeviceInfo]]):
+    def register_device_source(self, source: DeviceSource):
         """注册设备来源（当前默认支持ADB，可扩展UART等）"""
-        name = str(source_name or "").strip() or "Unknown"
-        self._device_sources[name] = source_getter
+        if not source:
+            raise ValueError("source cannot be None")
+        name = str(source.get_name() or "").strip() or "Unknown"
+        self._device_sources[name] = source
 
     def add_callback(self, event_type: str, callback: Callable):
         """添加回调函数"""
@@ -130,13 +136,15 @@ class DeviceMonitor:
         try:
             logging.debug("正在更新设备信息...")
             devices = []
-            for source_name, source_getter in self._device_sources.items():
-                source_devices = source_getter() or []
-                for device in source_devices:
-                    copied = copy.deepcopy(device)
-                    if not copied.detection_method:
-                        copied.detection_method = source_name
-                    devices.append(copied)
+            for source_name, source in self._device_sources.items():
+                try:
+                    source_devices = source.poll_devices() or []
+                    for device in source_devices:
+                        if not device.detection_method:
+                            device.detection_method = source_name
+                        devices.append(device)
+                except Exception as source_error:
+                    logging.error(f"设备来源 {source_name} 轮询失败: {source_error}")
             # 设备监控仅负责插拔同步，设备类型辨别与目标设备解析由device_parser负责
             new_connected_index = {d.serial: d for d in devices}
             self._connected_index = new_connected_index
