@@ -12,6 +12,7 @@ import subprocess
 import platform
 import zipfile
 import argparse
+import importlib.util
 from pathlib import Path
 from datetime import datetime
 
@@ -20,7 +21,7 @@ class CBSSPackager:
 
     def __init__(self):
         self.project_root = Path.cwd()
-        self.version = "3.1.2"
+        self.version = "3.1.3"
         self.build_date = datetime.now().strftime("%Y-%m-%d")
 
         # 打包目录
@@ -101,6 +102,44 @@ class CBSSPackager:
 
         return True
 
+    def check_build_dependencies(self):
+        """检查构建与运行时关键依赖"""
+        self.log("检查编译依赖...")
+
+        required_modules = {
+            'PyInstaller': 'pip install pyinstaller',
+            'cryptography': 'pip install cryptography',
+        }
+        missing_modules = []
+
+        for module_name, install_hint in required_modules.items():
+            if importlib.util.find_spec(module_name) is None:
+                missing_modules.append((module_name, install_hint))
+
+        if missing_modules:
+            for module_name, install_hint in missing_modules:
+                self.log(f"✗ 缺少依赖模块: {module_name} ({install_hint})", "ERROR")
+            return False
+
+        try:
+            import tkinter  # noqa: F401
+        except Exception:
+            self.log("✗ 缺少依赖模块: tkinter (请安装包含tkinter的Python发行版)", "ERROR")
+            return False
+
+        required_files = [
+            'config/default_config.ini',
+            'config/prompt_chn.ini',
+            'main.py',
+        ]
+        for file_name in required_files:
+            if not (self.project_root / file_name).exists():
+                self.log(f"✗ 缺少构建所需文件: {file_name}", "ERROR")
+                return False
+
+        self.log("✓ 编译依赖检查通过")
+        return True
+
     def clean_build(self, keep_dirs=None):
         """清理构建文件"""
         self.log("清理构建文件...")
@@ -143,6 +182,7 @@ class CBSSPackager:
         binaries = []
         datas = [
             ('config/default_config.ini', 'config'),
+            ('config/prompt_chn.ini', 'config'),
             ('changelog/CHANGELOG.md', '.'),
             ('README.md', '.'),
         ]
@@ -225,6 +265,10 @@ exe = EXE(
         """构建可执行文件"""
         self.log("构建可执行文件...")
 
+        if not self.check_build_dependencies():
+            self.log("✗ 构建失败：编译依赖检查未通过", "ERROR")
+            return False
+
         spec_file = self.create_pyinstaller_spec(simple=simple, optimize_level=optimize_level)
 
         try:
@@ -263,20 +307,24 @@ exe = EXE(
         self.log("创建开发环境包...")
 
         dev_dir = self.project_root / self.build_dirs['dev']
-        dev_dir.mkdir(exist_ok=True)
+        dev_dir.mkdir(parents=True, exist_ok=True)
 
         # 复制核心文件
         for file_name in self.core_files:
             src = self.project_root / file_name
             if src.exists():
-                shutil.copy2(src, dev_dir / file_name)
+                dst = dev_dir / file_name
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
 
         # 复制脚本文件
-        script_files = ['build_package.py', 'pack_dev.py', 'setup_env.py', 'build.bat']
+        script_files = ['package_all.py']
         for script in script_files:
             src = self.project_root / script
             if src.exists():
-                shutil.copy2(src, dev_dir / script)
+                dst = dev_dir / script
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
 
         # 复制目录
         all_dirs = self.core_dirs + self.optional_dirs
@@ -302,7 +350,7 @@ exe = EXE(
         self.log("创建轻量版本...")
 
         lite_dir = self.project_root / self.build_dirs['lite']
-        lite_dir.mkdir(exist_ok=True)
+        lite_dir.mkdir(parents=True, exist_ok=True)
 
         # 复制核心文件
         core_files = ['main.py', 'requirements.txt']
@@ -336,7 +384,7 @@ exe = EXE(
             return None
 
         portable_dir = self.project_root / self.build_dirs['portable']
-        portable_dir.mkdir(exist_ok=True)
+        portable_dir.mkdir(parents=True, exist_ok=True)
 
         # 复制可执行文件
         exe_src = self.project_root / "dist" / "TheCube.exe"
@@ -380,7 +428,7 @@ exe = EXE(
             return None
 
         installer_dir = self.project_root / self.build_dirs['installer']
-        installer_dir.mkdir(exist_ok=True)
+        installer_dir.mkdir(parents=True, exist_ok=True)
         (installer_dir / "changelog").mkdir(exist_ok=True)
         # 复制可执行文件
         exe_src = self.project_root / "dist" / "TheCube.exe"
@@ -392,7 +440,9 @@ exe = EXE(
         for file_name in all_files:
             src = self.project_root / file_name
             if src.exists():
-                shutil.copy2(src, installer_dir / file_name)
+                dst = installer_dir / file_name
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
 
         all_dirs = self.core_dirs + self.optional_dirs
         for dir_name in all_dirs:
@@ -419,7 +469,7 @@ exe = EXE(
             return None
 
         release_dir = self.project_root / self.build_dirs['release']
-        release_dir.mkdir(exist_ok=True)
+        release_dir.mkdir(parents=True, exist_ok=True)
         (release_dir / "changelog").mkdir(exist_ok=True)
         # 复制可执行文件
         exe_src = self.project_root / "dist" / "TheCube.exe"
@@ -431,7 +481,9 @@ exe = EXE(
         for file_name in doc_files:
             src = self.project_root / file_name
             if src.exists():
-                shutil.copy2(src, release_dir / file_name)
+                dst = release_dir / file_name
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
 
         # 复制必要目录
         essential_dirs = ['adb', 'config']
@@ -464,6 +516,7 @@ exe = EXE(
                 continue
             archive_name = f"{dir_path.name}.zip"
             archive_path = self.project_root / "package" / archive_name
+            archive_path.parent.mkdir(parents=True, exist_ok=True)
 
             try:
                 with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
@@ -516,7 +569,7 @@ echo.
 echo 可用命令：
 echo   python main.py                 - 启动GUI程序
 echo   python stress_test\\quick_stress_test.py - 运行压力测试
-echo   python build_package.py        - 打包可执行文件
+echo   python package_all.py --type portable - 打包可执行文件
 echo.
 echo 输入 'deactivate' 退出虚拟环境
 echo 输入 'exit' 关闭此窗口
@@ -527,6 +580,12 @@ cmd /k
 
         with open(dev_dir / "setup_dev.bat", 'w', encoding='gbk') as f:
             f.write(setup_script)
+
+        setup_venv_script = '''@echo off
+call setup_dev.bat
+'''
+        with open(dev_dir / "setup_venv.bat", 'w', encoding='gbk') as f:
+            f.write(setup_venv_script)
 
         # 快速运行脚本
         run_script = '''@echo off
@@ -568,7 +627,7 @@ if exist "venv\\Scripts\\python.exe" (
 - 支持Windows平台
 
 ## 打包说明
-- 运行 build_package.py 可生成可执行文件
+- 运行 package_all.py --type portable 可生成可执行文件
 - 或使用 pyinstaller 手动打包
 
 ## 注意事项

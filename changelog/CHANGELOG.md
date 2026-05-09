@@ -1,5 +1,16 @@
 # CBSS工具更新日志
 
+## v3.1.3 (2026-05-09)
+
+### 问题修复
+1. **修复打包后可执行文件运行依赖检查不足问题**
+   - 在构建可执行文件前新增关键依赖与关键文件检查（PyInstaller、cryptography、tkinter、prompt配置文件）
+   - 打包spec新增 `config/prompt_chn.ini`，避免运行时缺少提示文本配置
+2. **修复开发包脚本引用无效构建脚本问题**
+   - 开发包改为携带 `package_all.py`
+   - `setup_dev.bat` 和开发说明中的打包命令更新为 `python package_all.py --type portable`
+   - 新增 `setup_venv.bat` 作为 venv 初始化快捷入口
+
 ## v3.1.2 (2026-05-09)
 
 ### 问题修复
