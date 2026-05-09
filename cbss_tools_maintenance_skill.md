@@ -101,7 +101,7 @@
 2. **串行执行与去重**
    - 自动授权队列使用 `_queued_serials/_in_progress_serials` 去重，避免并发重复激活同一设备。
 3. **授权后刷新**
-   - 自动授权完成后刷新 `refresh_all_cube()` + `refresh_device(serial)`，仅更新当前目标设备解析结果。
+   - 自动授权完成后调用 `refresh_all_cube()` + `refresh_device(serial)`：前者刷新全部 Cube 快照，后者仅触发当前目标设备重解析。
 4. **线程约束**
    - `DeviceMonitor/DeviceParser/CubeManager/AuthenticationManager` 后台线程均为 `daemon=True`。
    - 涉及 UI 更新仍必须回主线程（`root.after(...)`）。
