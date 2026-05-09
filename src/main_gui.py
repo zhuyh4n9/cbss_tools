@@ -141,6 +141,9 @@ class AuthenticatorToolGUI:
             variable=self.auto_activation_menu_var,
             command=self.toggle_auto_activation
         )
+        tools_menu.add_separator()
+        tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.create_simulated_cube'), command=self.show_create_simulated_cube_dialog)
+        tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.load_simulated_cube'), command=self.show_load_simulated_cube_dialog)
           # 新增：设备WiFi连接
         tools_menu.add_separator()
         tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.current_wifi'), command=self.view_current_wifi)
@@ -426,15 +429,17 @@ class AuthenticatorToolGUI:
     def update_authenticator_display(self, authenticators: Dict[str, AuthenticatorInfo]):
         """更新激活盒子显示"""
         def update_ui():
-            self._update_auto_auth_ui_state(len(authenticators))
+            merged_authenticators = dict(authenticators or {})
+            merged_authenticators.update(self.auth_manager.get_simulated_cube_infos())
+            self._update_auto_auth_ui_state(len(merged_authenticators))
             # 更新激活盒子选择器
-            authenticator_serials = list(authenticators.keys())
+            authenticator_serials = list(merged_authenticators.keys())
             self.update_authenticator_selector(authenticator_serials)
 
             # 保存激活盒子数据
-            self.authenticators_data = authenticators   
+            self.authenticators_data = merged_authenticators
             current_selection = self.auth_selector.get()
-            if current_selection and current_selection in authenticators:
+            if current_selection and current_selection in merged_authenticators:
                 self.update_authenticator_info(current_selection)
             elif authenticator_serials:
                 self.auth_selector.set(authenticator_serials[0])
@@ -462,6 +467,7 @@ class AuthenticatorToolGUI:
         """更新激活盒子详细信息"""
         if hasattr(self, 'authenticators_data') and serial in self.authenticators_data:
             auth_info = self.authenticators_data[serial]
+            is_simulated_cube = self.auth_manager.is_simulated_cube(serial)
 
             # 更新基本信息
             self.serial_id_var.set(serial)
@@ -494,10 +500,18 @@ class AuthenticatorToolGUI:
                 formatted_data = self.format_snapshot_data(auth_info)
                 self.snapshot_text.insert('1.0', formatted_data)
 
-            # 启动网络监控 (NEW in Update 4)
-            if self.current_authenticator != serial:
-                self.current_authenticator = serial
-                self.start_network_monitoring()
+            if is_simulated_cube:
+                self.current_authenticator = None
+                self.stop_network_monitoring(join_timeout=0.1)
+                self.network_status_var.set(self.prompt_mgr.get('Status.simulated_network_ok'))
+                self.network_status_label.config(foreground="green")
+                self.wifi_ssid_var.set(self.prompt_mgr.get('Status.simulated_wifi_name'))
+                self.wifi_ssid_label.config(foreground="blue")
+            else:
+                # 启动网络监控 (NEW in Update 4)
+                if self.current_authenticator != serial:
+                    self.current_authenticator = serial
+                    self.start_network_monitoring()
         else:
             self.clear_authenticator_display()
 
@@ -1276,7 +1290,7 @@ class AuthenticatorToolGUI:
             self.root,
             title,
             operation,
-            list(self.device_monitor.authenticators.keys()),
+            self.auth_manager.get_available_authenticators(),
             self.perform_authenticator_operation,
             self.prompt_mgr
         )
@@ -1297,16 +1311,7 @@ class AuthenticatorToolGUI:
         def operation_thread():
             try:
                 progress.update_progress(self.prompt_mgr.format('Progress.executing_operation', name=operation_title))
-                if operation == 'lock':
-                    result = self.adb_manager.authenticator_lock(serial, token_data)
-                elif operation == 'unlock':
-                    result = self.adb_manager.authenticator_unlock(serial, token_data)
-                elif operation == 'activate':
-                    result = self.adb_manager.authenticator_activate(serial, token_data)
-                elif operation == 'config':
-                    result = self.adb_manager.authenticator_config(serial, token_data)
-                else:
-                    result = None
+                result = self.auth_manager.perform_cube_operation(operation, serial, token_data)
                 self.root.after(0, lambda: (progress.close(), self.on_operation_complete(operation, result)))
             except Exception as e:
                 self.root.after(0, lambda: (progress.close(), self.on_operation_error(operation, str(e))))
@@ -1439,6 +1444,98 @@ class AuthenticatorToolGUI:
         ttk.Button(dialog, text=self.prompt_mgr.get('Buttons.ok'), command=on_confirm).pack(pady=(15, 5))
         ttk.Button(dialog, text=self.prompt_mgr.get('Buttons.cancel'), command=dialog.destroy).pack(pady=5)
 
+    def show_create_simulated_cube_dialog(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title(self.prompt_mgr.get('Dialogs.create_simulated_cube_title'))
+        dialog.geometry("520x390")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        fields = ttk.Frame(dialog, padding=12)
+        fields.pack(fill=tk.BOTH, expand=True)
+
+        expire_var = tk.StringVar()
+        counter_var = tk.StringVar(value="100")
+        key_path_var = tk.StringVar()
+        cube_id_var = tk.StringVar()
+        oem_id_var = tk.StringVar()
+        persist_path_var = tk.StringVar()
+
+        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_expire_label')).grid(row=0, column=0, sticky='w', pady=4)
+        ttk.Entry(fields, textvariable=expire_var, width=45).grid(row=0, column=1, sticky='we', pady=4)
+        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_counter_label')).grid(row=1, column=0, sticky='w', pady=4)
+        ttk.Entry(fields, textvariable=counter_var, width=45).grid(row=1, column=1, sticky='we', pady=4)
+        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_private_key_label')).grid(row=2, column=0, sticky='w', pady=4)
+        ttk.Entry(fields, textvariable=key_path_var, width=45).grid(row=2, column=1, sticky='we', pady=4)
+        ttk.Button(fields, text=self.prompt_mgr.get('Buttons.choose_file'), command=lambda: key_path_var.set(filedialog.askopenfilename() or key_path_var.get())).grid(row=2, column=2, padx=(5, 0))
+        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_id_label')).grid(row=3, column=0, sticky='w', pady=4)
+        ttk.Entry(fields, textvariable=cube_id_var, width=45).grid(row=3, column=1, sticky='we', pady=4)
+        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_oem_id_label')).grid(row=4, column=0, sticky='w', pady=4)
+        ttk.Entry(fields, textvariable=oem_id_var, width=45).grid(row=4, column=1, sticky='we', pady=4)
+        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_persist_path_label')).grid(row=5, column=0, sticky='w', pady=4)
+        ttk.Entry(fields, textvariable=persist_path_var, width=45).grid(row=5, column=1, sticky='we', pady=4)
+        ttk.Button(fields, text=self.prompt_mgr.get('Buttons.choose_file'), command=lambda: persist_path_var.set(filedialog.asksaveasfilename(defaultextension=".json") or persist_path_var.get())).grid(row=5, column=2, padx=(5, 0))
+        fields.columnconfigure(1, weight=1)
+
+        def on_create():
+            try:
+                serial = self.auth_manager.create_simulated_cube(
+                    expired_date=expire_var.get().strip(),
+                    counter=int(counter_var.get().strip() or "0"),
+                    private_key_path=key_path_var.get().strip(),
+                    cube_id=cube_id_var.get().strip(),
+                    oem_id=oem_id_var.get().strip(),
+                    persist_path=persist_path_var.get().strip(),
+                )
+                dialog.destroy()
+                self.status_var.set(self.prompt_mgr.format('InfoMessages.simulated_cube_created', serial=serial))
+                self.update_authenticator_display(self.device_monitor.authenticators)
+            except Exception as e:
+                messagebox.showerror(self.prompt_mgr.get('Common.error_title'), self.prompt_mgr.format('Errors.unknown_error', msg=str(e)))
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill=tk.X, pady=(5, 10))
+        ttk.Button(btn_frame, text=self.prompt_mgr.get('Buttons.ok'), command=on_create).pack(side=tk.RIGHT, padx=8)
+        ttk.Button(btn_frame, text=self.prompt_mgr.get('Buttons.cancel'), command=dialog.destroy).pack(side=tk.RIGHT)
+
+    def show_load_simulated_cube_dialog(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title(self.prompt_mgr.get('Dialogs.load_simulated_cube_title'))
+        dialog.geometry("520x220")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        fields = ttk.Frame(dialog, padding=12)
+        fields.pack(fill=tk.BOTH, expand=True)
+
+        cube_path_var = tk.StringVar()
+        key_path_var = tk.StringVar()
+
+        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_file_path_label')).grid(row=0, column=0, sticky='w', pady=6)
+        ttk.Entry(fields, textvariable=cube_path_var, width=45).grid(row=0, column=1, sticky='we', pady=6)
+        ttk.Button(fields, text=self.prompt_mgr.get('Buttons.choose_file'), command=lambda: cube_path_var.set(filedialog.askopenfilename() or cube_path_var.get())).grid(row=0, column=2, padx=(5, 0))
+        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_private_key_label')).grid(row=1, column=0, sticky='w', pady=6)
+        ttk.Entry(fields, textvariable=key_path_var, width=45).grid(row=1, column=1, sticky='we', pady=6)
+        ttk.Button(fields, text=self.prompt_mgr.get('Buttons.choose_file'), command=lambda: key_path_var.set(filedialog.askopenfilename() or key_path_var.get())).grid(row=1, column=2, padx=(5, 0))
+        fields.columnconfigure(1, weight=1)
+
+        def on_load():
+            try:
+                serial = self.auth_manager.load_simulated_cube(
+                    persist_path=cube_path_var.get().strip(),
+                    private_key_path=key_path_var.get().strip(),
+                )
+                dialog.destroy()
+                self.status_var.set(self.prompt_mgr.format('InfoMessages.simulated_cube_loaded', serial=serial))
+                self.update_authenticator_display(self.device_monitor.authenticators)
+            except Exception as e:
+                messagebox.showerror(self.prompt_mgr.get('Common.error_title'), self.prompt_mgr.format('Errors.unknown_error', msg=str(e)))
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill=tk.X, pady=(5, 10))
+        ttk.Button(btn_frame, text=self.prompt_mgr.get('Buttons.ok'), command=on_load).pack(side=tk.RIGHT, padx=8)
+        ttk.Button(btn_frame, text=self.prompt_mgr.get('Buttons.cancel'), command=dialog.destroy).pack(side=tk.RIGHT)
+
     def _get_uuid_by_serial_from_tree(self, device_serial: str) -> str:
         """从设备表格中按serial获取UUID显示值"""
         target = f"serial:{device_serial}"
@@ -1465,7 +1562,7 @@ class AuthenticatorToolGUI:
             return
 
         # 获取可用的激活盒子
-        authenticators = list(self.device_monitor.authenticators.keys())
+        authenticators = self.auth_manager.get_available_authenticators()
         if not authenticators:
             messagebox.showerror(self.prompt_mgr.get('Common.error_title'), self.prompt_mgr.get('Validation.no_available_authenticator'))
             return
@@ -1495,7 +1592,7 @@ class AuthenticatorToolGUI:
             return
 
         # 获取可用的激活盒子
-        authenticators = list(self.device_monitor.authenticators.keys())
+        authenticators = self.auth_manager.get_available_authenticators()
         if not authenticators:
             messagebox.showerror(self.prompt_mgr.get('Common.error_title'), self.prompt_mgr.get('Validation.no_available_authenticator'))
             return
