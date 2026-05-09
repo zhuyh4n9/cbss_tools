@@ -5,6 +5,9 @@
 ### 版本
 - 配置版本号更新为 **3.1.1**
 
+### 文档
+- 完善 `cbss_tools_maintenance_skill.md`，补充 TargetDevice/Cube 管理、自动授权与并发维护要点
+
 ## v3.1 (2026-05-07)
 
 ### 功能优化
