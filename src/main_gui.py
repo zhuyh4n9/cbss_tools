@@ -31,6 +31,8 @@ from .diaglog import (
     DiagnosticDialog,
 )
 
+NETWORK_MONITOR_THREAD_JOIN_TIMEOUT = 0.1
+
 class AuthenticatorToolGUI:
     def __init__(self):
         self.root = tk.Tk()
@@ -502,7 +504,7 @@ class AuthenticatorToolGUI:
 
             if is_simulated_cube:
                 self.current_authenticator = None
-                self.stop_network_monitoring(join_timeout=0.1)
+                self.stop_network_monitoring(join_timeout=NETWORK_MONITOR_THREAD_JOIN_TIMEOUT)
                 self.network_status_var.set(self.prompt_mgr.get('Status.simulated_network_ok'))
                 self.network_status_label.config(foreground="green")
                 self.wifi_ssid_var.set(self.prompt_mgr.get('Status.simulated_wifi_name'))

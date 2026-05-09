@@ -19,7 +19,7 @@ class _FakeDeviceMonitor:
         self.config = _FakeConfig()
         self.device_parser = _FakeDeviceParser()
         self.events = events if events is not None else []
-        self.authenticators = {}
+        self.authenticators = {"CUBE-001": AuthenticatorInfo(serial="CUBE-001", time_status="Ready")}
         self.refresh_all_cube_calls = 0
         self.refresh_device_calls = []
         self.refresh_all_device_calls = 0

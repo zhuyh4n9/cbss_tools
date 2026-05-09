@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
@@ -28,31 +29,31 @@ class SimulateCubeConfig:
 class ICube(ABC):
     @abstractmethod
     def get_serial(self) -> str:
-        raise NotImplementedError
+        pass
 
     @abstractmethod
     def sign_uuid(self, uuid_hex: str) -> CommandResult:
-        raise NotImplementedError
+        pass
 
     @abstractmethod
     def lock(self, token_hex: str) -> CommandResult:
-        raise NotImplementedError
+        pass
 
     @abstractmethod
     def unlock(self, token_hex: str) -> CommandResult:
-        raise NotImplementedError
+        pass
 
     @abstractmethod
     def activate(self, token_hex: str) -> CommandResult:
-        raise NotImplementedError
+        pass
 
     @abstractmethod
     def config(self, config_hex: str) -> CommandResult:
-        raise NotImplementedError
+        pass
 
     @abstractmethod
     def to_authenticator_info(self) -> AuthenticatorInfo:
-        raise NotImplementedError
+        pass
 
 
 class RealCube(ICube):
@@ -112,14 +113,14 @@ class SimulateCube(ICube):
     def sign_uuid(self, uuid_hex: str) -> CommandResult:
         raw_uuid = (uuid_hex or "").strip().lower()
         if not raw_uuid:
-            return CommandResult(False, 1, error_message="UUID为空")
+            return CommandResult(False, 1, error_message="UUID is empty")
         if self._config.counter <= 0:
-            return CommandResult(False, 1, error_message="可授权数已用尽")
+            return CommandResult(False, 1, error_message="No remaining authorization quota")
 
         try:
             uuid_bytes = bytes.fromhex(raw_uuid)
         except ValueError:
-            return CommandResult(False, 1, error_message="UUID不是合法hex字符串")
+            return CommandResult(False, 1, error_message="UUID must be a valid hex string")
 
         try:
             key = self._read_private_key()
@@ -134,7 +135,7 @@ class SimulateCube(ICube):
             self._persist()
             return CommandResult(True, 0, result_data=signature, raw_output=signature)
         except Exception as e:
-            return CommandResult(False, 1, error_message=f"模拟Cube签名失败: {e}")
+            return CommandResult(False, 1, error_message=f"Simulated cube signing failed: {e}")
 
     def lock(self, token_hex: str) -> CommandResult:
         return CommandResult(True, 0, result_data="ok", raw_output="ok")
@@ -180,7 +181,7 @@ class SimulateCube(ICube):
         with open(persist_path, "r", encoding="utf-8") as f:
             data: Dict[str, Any] = json.load(f)
 
-        serial = str(serial_override or data.get("serial") or f"SIM-CUBE-{data.get('cube_id', '1')}")
+        serial = str(serial_override or data.get("serial") or f"SIM-CUBE-{uuid.uuid4().hex[:8].upper()}")
         config = SimulateCubeConfig(
             serial=serial,
             cube_id=str(data.get("cube_id", "")),

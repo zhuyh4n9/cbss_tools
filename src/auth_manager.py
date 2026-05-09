@@ -410,9 +410,9 @@ class AuthenticationManager:
         """执行单个设备的激活流程"""
         try:
             logging.info(f"开始激活设备: {device_serial}")
-            cube = self._resolve_cube(authenticator_serial)
 
             if self.is_simulated_device(device_serial):
+                cube = self._resolve_cube(authenticator_serial)
                 if progress_callback:
                     progress_callback("正在准备模拟设备认证...")
 
@@ -472,6 +472,7 @@ class AuthenticationManager:
                 }
 
             # 步骤1: 获取设备UUID
+            cube = self._resolve_cube(authenticator_serial)
             if progress_callback:
                 progress_callback("正在获取设备UUID...")
 
@@ -655,6 +656,9 @@ class AuthenticationManager:
         serial = str(serial or "").strip()
         if self.is_simulated_cube(serial):
             return self._simulated_cubes[serial]
+        known_authenticators = getattr(self.device_monitor, "authenticators", {}) or {}
+        if serial not in known_authenticators:
+            raise ValueError(f"未找到Cube: {serial}")
         return RealCube(serial=serial, adb_manager=self.adb_manager)
 
     @staticmethod

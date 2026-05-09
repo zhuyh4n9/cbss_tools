@@ -89,6 +89,7 @@ class TestSimulateCube(unittest.TestCase):
                 )
             )
             uuid_hex = "11" * 32
+            before_info = cube.to_authenticator_info()
             result = cube.sign_uuid(uuid_hex)
 
             self.assertTrue(result.success)
@@ -107,8 +108,8 @@ class TestSimulateCube(unittest.TestCase):
 
             with open(persist_path, "r", encoding="utf-8") as f:
                 payload = json.load(f)
-            self.assertEqual(payload["counter"], 1)
-            self.assertEqual(payload["authorized_device_num"], 1)
+            self.assertEqual(payload["counter"], before_info.counter - 1)
+            self.assertEqual(payload["authorized_device_num"], before_info.authorized_device_num + 1)
 
     def test_auth_manager_can_create_load_and_use_simulated_cube(self):
         private_key = ec.generate_private_key(ec.SECP256R1())
