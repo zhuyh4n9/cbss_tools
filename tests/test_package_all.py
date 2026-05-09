@@ -21,8 +21,7 @@ class TestPackageAll(unittest.TestCase):
                 self.packager.project_root = temp_path
                 self.packager.log = lambda *args, **kwargs: None
                 os.chdir(temp_path)
-                os_path = os.path
-                with mock.patch.object(os_path, "exists", return_value=False):
+                with mock.patch("os.path.exists", return_value=False):
                     spec_name = self.packager.create_pyinstaller_spec(simple=True)
                 spec_path = temp_path / spec_name
                 self.assertTrue(spec_path.exists())
