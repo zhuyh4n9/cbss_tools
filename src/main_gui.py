@@ -667,6 +667,10 @@ class AuthenticatorToolGUI:
         logging.debug(f"Updating device display with {len(all_devices)} devices")
         show_na_devices = self.config_manager.getboolean('UI', 'show_na_devices', False)
         auto_enabled = self.auth_manager.is_auto_activation_enabled()
+        manual_available_text = self.prompt_mgr.get('DeviceTable.action_manual_activate')
+        manual_unavailable_text = self.prompt_mgr.get('DeviceTable.action_unavailable')
+        auto_waiting_text = self.prompt_mgr.get('DeviceTable.action_waiting_auto')
+        auto_done_text = self.prompt_mgr.get('DeviceTable.action_auto_completed')
         rows = []
         seen_serials = set()
         for device in all_devices:
@@ -688,11 +692,6 @@ class AuthenticatorToolGUI:
                 uuid_display = "N/A"
             else:
                 uuid_display = uuid_text if uuid_text else "获取中..."
-
-            manual_available_text = self.prompt_mgr.get('DeviceTable.action_manual_activate')
-            manual_unavailable_text = self.prompt_mgr.get('DeviceTable.action_unavailable')
-            auto_waiting_text = self.prompt_mgr.get('DeviceTable.action_waiting_auto')
-            auto_done_text = self.prompt_mgr.get('DeviceTable.action_auto_completed')
 
             if auto_enabled:
                 if self.auth_manager.is_device_auto_activation_completed(device.serial):

@@ -149,7 +149,10 @@ class DeviceParser:
             for serial in removed:
                 removed_info = self._base_devices.get(serial)
                 if removed_info:
-                    self._log_device_event("removed", removed_info.to_device_info())
+                    try:
+                        self._log_device_event("removed", removed_info.to_device_info())
+                    except Exception as log_error:
+                        logging.warning(f"记录设备移除日志失败 [{serial}]: {log_error}")
                 self._base_devices.pop(serial, None)
                 self._await_queue.pop(serial, None)
                 self._ready_queue.pop(serial, None)
@@ -158,7 +161,10 @@ class DeviceParser:
                 self.cube_manager.remove_cube(serial)
 
             for serial in added:
-                self._log_device_event("added", incoming[serial].to_device_info())
+                try:
+                    self._log_device_event("added", incoming[serial].to_device_info())
+                except Exception as log_error:
+                    logging.warning(f"记录新设备日志失败 [{serial}]: {log_error}")
                 self._base_devices[serial] = incoming[serial]
                 if serial not in self._order:
                     self._order.append(serial)
