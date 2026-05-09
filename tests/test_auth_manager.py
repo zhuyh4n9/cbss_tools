@@ -1,6 +1,6 @@
 import unittest
 
-from src.adb_manager import CommandResult
+from src.adb_manager import CommandResult, DeviceInfo, AuthenticatorInfo
 from src.auth_manager import AuthenticationManager
 
 
@@ -19,6 +19,7 @@ class _FakeDeviceMonitor:
         self.config = _FakeConfig()
         self.device_parser = _FakeDeviceParser()
         self.events = events if events is not None else []
+        self.authenticators = {}
         self.refresh_all_cube_calls = 0
         self.refresh_device_calls = []
         self.refresh_all_device_calls = 0
@@ -32,6 +33,9 @@ class _FakeDeviceMonitor:
 
     def refresh_all_device(self):
         self.refresh_all_device_calls += 1
+
+    def get_authenticator_by_serial(self, serial: str):
+        return self.authenticators.get(serial)
 
 
 class _FailingRefreshDeviceMonitor(_FakeDeviceMonitor):
@@ -134,6 +138,31 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertEqual(fake_monitor.refresh_all_cube_calls, 1)
         self.assertGreater(len(log_output.output), 0)
+
+    def test_pick_authenticator_requires_ready_time_status(self):
+        fake_monitor = _FakeDeviceMonitor()
+        fake_monitor.authenticators = {
+            "CUBE-A": AuthenticatorInfo(serial="CUBE-A", time_status="NotReady"),
+            "CUBE-B": AuthenticatorInfo(serial="CUBE-B", time_status="Ready"),
+            "CUBE-C": AuthenticatorInfo(serial="CUBE-C", time_status=" pending "),
+        }
+        manager = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=fake_monitor)
+
+        picked = manager._pick_authenticator()
+
+        self.assertEqual(picked, "CUBE-B")
+
+    def test_unauthorized_enqueue_clears_auto_completed_flag(self):
+        fake_monitor = _FakeDeviceMonitor()
+        manager = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=fake_monitor)
+        manager._auto_activation_enabled = True
+
+        serial = "DEV-QUEUE-001"
+        manager._auto_activation_completed_serials.add(serial)
+        manager._on_unauthorized_ready(DeviceInfo(serial=serial, status="Unauthorized", uuid="UUID-001"))
+
+        self.assertTrue(manager.is_device_queued_for_auto_activation(serial))
+        self.assertFalse(manager.is_device_auto_activation_completed(serial))
 
 
 if __name__ == "__main__":

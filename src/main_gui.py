@@ -667,6 +667,10 @@ class AuthenticatorToolGUI:
         logging.debug(f"Updating device display with {len(all_devices)} devices")
         show_na_devices = self.config_manager.getboolean('UI', 'show_na_devices', False)
         auto_enabled = self.auth_manager.is_auto_activation_enabled()
+        manual_available_text = self.prompt_mgr.get('DeviceTable.action_manual_activate')
+        manual_unavailable_text = self.prompt_mgr.get('DeviceTable.action_unavailable')
+        auto_waiting_text = self.prompt_mgr.get('DeviceTable.action_waiting_auto')
+        auto_done_text = self.prompt_mgr.get('DeviceTable.action_auto_completed')
         rows = []
         seen_serials = set()
         for device in all_devices:
@@ -689,7 +693,15 @@ class AuthenticatorToolGUI:
             else:
                 uuid_display = uuid_text if uuid_text else "获取中..."
 
-            heading = "Activate" if (status_lower == "unauthorized" and self._is_uuid_ready(uuid_display) and not auto_enabled) else "N/A"
+            if auto_enabled:
+                if self.auth_manager.is_device_auto_activation_completed(device.serial):
+                    heading = auto_done_text
+                elif status_lower == "unauthorized" and self._is_uuid_ready(uuid_display) and self.auth_manager.is_device_queued_for_auto_activation(device.serial):
+                    heading = auto_waiting_text
+                else:
+                    heading = manual_unavailable_text
+            else:
+                heading = manual_available_text if (status_lower == "unauthorized" and self._is_uuid_ready(uuid_display)) else manual_unavailable_text
             rows.append((
                 "serial:" + str(device.serial),
                 uuid_display,
