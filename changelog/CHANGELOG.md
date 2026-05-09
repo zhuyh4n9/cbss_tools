@@ -1,5 +1,12 @@
 # CBSS工具更新日志
 
+## v3.1.2 (2026-05-09)
+
+### 问题修复
+1. **修复 `src/main_gui.py` 直接运行时报错**
+   - 解决 `ImportError: attempted relative import with no known parent package`
+   - 现在可兼容包内导入与脚本直接运行两种启动方式
+
 ## v3.1.1 (2026-05-09)
 
 ### 功能优化

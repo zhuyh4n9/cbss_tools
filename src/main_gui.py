@@ -6,30 +6,55 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import threading
 import os
+import sys
 import time
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from .config_manager import ConfigManager
-from .log_manager import LogManager
-from .adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
-from .device_monitor import DeviceMonitor
-from .auth_manager import AuthenticationManager
-from .prompt_manager import PromptManager
-from .build_options import SIMULATED_DEVICE_STATUS_OPTIONS
-from .diaglog import (
-    LogLevelDialog,
-    LogViewDialog,
-    AuthenticatorOperationDialog,
-    AuthenticationDialog,
-    BatchAuthenticationDialog,
-    ProgressDialog,
-    WifiDisconnectDialog,
-    WifiConfigDialog,
-    WifiScanDialog,
-    DiagnosticDialog,
-)
+if __package__ in (None, ""):
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+    from src.config_manager import ConfigManager
+    from src.log_manager import LogManager
+    from src.adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
+    from src.device_monitor import DeviceMonitor
+    from src.auth_manager import AuthenticationManager
+    from src.prompt_manager import PromptManager
+    from src.build_options import SIMULATED_DEVICE_STATUS_OPTIONS
+    from src.diaglog import (
+        LogLevelDialog,
+        LogViewDialog,
+        AuthenticatorOperationDialog,
+        AuthenticationDialog,
+        BatchAuthenticationDialog,
+        ProgressDialog,
+        WifiDisconnectDialog,
+        WifiConfigDialog,
+        WifiScanDialog,
+        DiagnosticDialog,
+    )
+else:
+    from .config_manager import ConfigManager
+    from .log_manager import LogManager
+    from .adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
+    from .device_monitor import DeviceMonitor
+    from .auth_manager import AuthenticationManager
+    from .prompt_manager import PromptManager
+    from .build_options import SIMULATED_DEVICE_STATUS_OPTIONS
+    from .diaglog import (
+        LogLevelDialog,
+        LogViewDialog,
+        AuthenticatorOperationDialog,
+        AuthenticationDialog,
+        BatchAuthenticationDialog,
+        ProgressDialog,
+        WifiDisconnectDialog,
+        WifiConfigDialog,
+        WifiScanDialog,
+        DiagnosticDialog,
+    )
 
 NETWORK_MONITOR_THREAD_JOIN_TIMEOUT = 0.1
 
@@ -887,7 +912,7 @@ class AuthenticatorToolGUI:
     def show_about(self):
         """显示关于信息"""
         company = self.config_manager.get('About', 'company', 'Autochips Inc')
-        version = self.config_manager.get('General', 'version', '3.0')
+        version = self.config_manager.get('General', 'version', '3.1.2')
         description = self.config_manager.get('About', 'description', self.prompt_mgr.get('Dialogs.about_desc'))
 
         about_text = f"""
