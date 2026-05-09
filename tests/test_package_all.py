@@ -27,6 +27,8 @@ class TestPackageAll(unittest.TestCase):
                 self.assertTrue(spec_path.exists())
                 content = spec_path.read_text(encoding="utf-8")
                 self.assertIn("('config/prompt_chn.ini', 'config')", content)
+                self.assertIn("collect_submodules('src')", content)
+                self.assertIn("'tkinter.simpledialog'", content)
             finally:
                 self.packager.project_root = self.repo_root
                 os.chdir(cwd)

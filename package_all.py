@@ -21,7 +21,7 @@ class CBSSPackager:
 
     def __init__(self):
         self.project_root = Path.cwd()
-        self.version = "3.1.3"
+        self.version = "3.1.4"
         self.build_date = datetime.now().strftime("%Y-%m-%d")
 
         # 打包目录
@@ -199,6 +199,7 @@ class CBSSPackager:
             ])
 
         spec_content = f'''# -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 
@@ -207,11 +208,12 @@ a = Analysis(
     pathex=[],
     binaries={binaries},
     datas={datas},
-    hiddenimports=[
+    hiddenimports=collect_submodules('src') + [
         'tkinter',
         'tkinter.ttk',
         'tkinter.messagebox',
         'tkinter.filedialog',
+        'tkinter.simpledialog',
         'cryptography',
         'cryptography.hazmat.primitives',
         'cryptography.hazmat.primitives.asymmetric',
