@@ -27,6 +27,7 @@ class AuthenticationManager:
         self._activate_queue: queue.Queue[Optional[str]] = queue.Queue()
         self._queued_serials = set()
         self._in_progress_serials = set()
+        self._auto_activation_completed_serials = set()
         self._queue_lock = threading.Lock()
         self._worker_running = False
         self._worker_thread = None
@@ -66,6 +67,7 @@ class AuthenticationManager:
         with self._queue_lock:
             self._queued_serials.clear()
             self._in_progress_serials.clear()
+            self._auto_activation_completed_serials.clear()
 
         while True:
             try:
@@ -123,6 +125,7 @@ class AuthenticationManager:
             with self._queue_lock:
                 if serial in self._queued_serials or serial in self._in_progress_serials:
                     return
+                self._auto_activation_completed_serials.discard(serial)
                 self._queued_serials.add(serial)
 
             self._activate_queue.put(serial)
@@ -131,11 +134,17 @@ class AuthenticationManager:
             logging.error(f"提交自动授权队列失败: {e}")
 
     def _pick_authenticator(self) -> Optional[str]:
-        authenticators = self.get_available_authenticators()
-        if not authenticators:
+        ready_authenticators = []
+        for serial in self.get_available_authenticators():
+            auth_info = self.device_monitor.get_authenticator_by_serial(serial)
+            time_status = (getattr(auth_info, 'time_status', '') or '').strip().lower()
+            if time_status == 'ready':
+                ready_authenticators.append(serial)
+
+        if not ready_authenticators:
             return None
         # 固定顺序选择，避免来回切换
-        return sorted(authenticators)[0]
+        return sorted(ready_authenticators)[0]
 
     def _is_device_still_unauthorized(self, serial: str) -> bool:
         try:
@@ -192,6 +201,8 @@ class AuthenticationManager:
                 result = self._run_authentication(serial, authenticator_serial)
                 if result.get('success'):
                     logging.info(f"自动授权成功: {serial}")
+                    with self._queue_lock:
+                        self._auto_activation_completed_serials.add(serial)
                 else:
                     logging.warning(f"自动授权失败: {serial}, {result.get('message', '')}")
 
@@ -579,6 +590,16 @@ class AuthenticationManager:
     def get_available_authenticators(self) -> List[str]:
         """获取可用的激活盒子列表"""
         return list(self.device_monitor.authenticators.keys())
+
+    def is_device_queued_for_auto_activation(self, serial: str) -> bool:
+        serial = str(serial or "")
+        with self._queue_lock:
+            return serial in self._queued_serials or serial in self._in_progress_serials
+
+    def is_device_auto_activation_completed(self, serial: str) -> bool:
+        serial = str(serial or "")
+        with self._queue_lock:
+            return serial in self._auto_activation_completed_serials
 
     def get_unauthorized_devices(self) -> List[DeviceInfo]:
         """获取未激活设备列表"""

@@ -135,6 +135,17 @@ class DeviceParser:
             added = new - current
 
             for serial in removed:
+                removed_info = self._base_devices.get(serial)
+                if removed_info:
+                    removed_device = removed_info.to_device_info()
+                    logging.info(
+                        "设备事件: removed, serial=%s, status=%s, device_type=%s, usb_port=%s, detection=%s",
+                        removed_device.serial,
+                        removed_device.status,
+                        removed_device.device_type,
+                        removed_device.usb_port,
+                        removed_device.detection_method
+                    )
                 self._base_devices.pop(serial, None)
                 self._await_queue.pop(serial, None)
                 self._ready_queue.pop(serial, None)
@@ -143,6 +154,15 @@ class DeviceParser:
                 self.cube_manager.remove_cube(serial)
 
             for serial in added:
+                added_device = incoming[serial].to_device_info()
+                logging.info(
+                    "设备事件: added, serial=%s, status=%s, device_type=%s, usb_port=%s, detection=%s",
+                    added_device.serial,
+                    added_device.status,
+                    added_device.device_type,
+                    added_device.usb_port,
+                    added_device.detection_method
+                )
                 self._base_devices[serial] = incoming[serial]
                 if serial not in self._order:
                     self._order.append(serial)

@@ -20,7 +20,7 @@ class CBSSPackager:
 
     def __init__(self):
         self.project_root = Path.cwd()
-        self.version = "3.1"
+        self.version = "3.1.1"
         self.build_date = datetime.now().strftime("%Y-%m-%d")
 
         # 打包目录
@@ -730,7 +730,7 @@ pause
         launcher_script = '''@echo off
 title TheCube - AC8267授权工具
 echo TheCube - AC8267授权工具...
-    echo 版本：v3.1
+    echo 版本：v3.1.1
 echo.
 TheCube.exe
 if errorlevel 1 (
