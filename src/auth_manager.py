@@ -15,6 +15,8 @@ from .target_device import AC8267Device, ITargetDevice, SimulatorDevice
 
 
 class AuthenticationManager:
+    _READY_TIME_STATUS = "ready"
+
     def __init__(self, adb_manager: ADBManager, device_monitor: DeviceMonitor):
         self.adb_manager = adb_manager
         self.device_monitor = device_monitor
@@ -137,8 +139,8 @@ class AuthenticationManager:
         ready_authenticators = []
         for serial in self.get_available_authenticators():
             auth_info = self.device_monitor.get_authenticator_by_serial(serial)
-            time_status = (getattr(auth_info, 'time_status', '') or '').strip().lower()
-            if time_status == 'ready':
+            time_status = self._normalize_status(getattr(auth_info, 'time_status', ''))
+            if time_status == self._READY_TIME_STATUS:
                 ready_authenticators.append(serial)
 
         if not ready_authenticators:
@@ -590,6 +592,10 @@ class AuthenticationManager:
     def get_available_authenticators(self) -> List[str]:
         """获取可用的激活盒子列表"""
         return list(self.device_monitor.authenticators.keys())
+
+    @staticmethod
+    def _normalize_status(value: str) -> str:
+        return str(value or "").strip().lower()
 
     def is_device_queued_for_auto_activation(self, serial: str) -> bool:
         serial = str(serial or "")

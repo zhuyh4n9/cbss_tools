@@ -151,6 +151,7 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         picked = manager._pick_authenticator()
 
         self.assertEqual(picked, "CUBE-B")
+        self.assertNotEqual(picked, "CUBE-C")
 
     def test_unauthorized_enqueue_clears_auto_completed_flag(self):
         fake_monitor = _FakeDeviceMonitor()
