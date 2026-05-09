@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 
@@ -6,12 +7,13 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('config/default_config.ini', 'config'), ('changelog/CHANGELOG.md', '.'), ('README.md', '.')],
-    hiddenimports=[
+    datas=[('config/default_config.ini', 'config'), ('config/prompt_chn.ini', 'config'), ('changelog/CHANGELOG.md', '.'), ('README.md', '.')],
+    hiddenimports=collect_submodules('src') + [
         'tkinter',
         'tkinter.ttk',
         'tkinter.messagebox',
         'tkinter.filedialog',
+        'tkinter.simpledialog',
         'cryptography',
         'cryptography.hazmat.primitives',
         'cryptography.hazmat.primitives.asymmetric',
