@@ -109,7 +109,6 @@ class CBSSPackager:
         required_modules = {
             'PyInstaller': 'pip install pyinstaller',
             'cryptography': 'pip install cryptography',
-            'tkinter': '请安装包含tkinter的Python发行版',
         }
         missing_modules = []
 
@@ -120,6 +119,12 @@ class CBSSPackager:
         if missing_modules:
             for module_name, install_hint in missing_modules:
                 self.log(f"✗ 缺少依赖模块: {module_name} ({install_hint})", "ERROR")
+            return False
+
+        try:
+            import tkinter  # noqa: F401
+        except Exception:
+            self.log("✗ 缺少依赖模块: tkinter (请安装包含tkinter的Python发行版)", "ERROR")
             return False
 
         required_files = [

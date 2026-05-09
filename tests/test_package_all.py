@@ -39,6 +39,7 @@ class TestPackageAll(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             dev_dir = Path(tmp_dir)
             self.packager._create_dev_scripts(dev_dir)
+            self.assertTrue((dev_dir / "setup_dev.bat").exists())
             setup_venv = dev_dir / "setup_venv.bat"
             self.assertTrue(setup_venv.exists())
             self.assertIn("call setup_dev.bat", setup_venv.read_text(encoding="gbk"))
