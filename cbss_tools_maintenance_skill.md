@@ -59,3 +59,49 @@
 - 做新功能先扩展配置，再扩展 `ADBManager`，最后接 UI。
 - 保持 `DeviceMonitor -> DeviceParser -> CubeManager` 边界清晰，避免把分类与快照逻辑挪回 UI。
 - 对外行为变化（菜单、提示、错误）一律走 `prompt_chn.ini`，避免硬编码中文。
+
+## 八、TargetDevice Management（按当前实现）
+1. **来源与同步**
+   - 设备来源走 `DeviceSource` 抽象，默认实现为 `AdbDeviceSource`。
+   - `DeviceMonitor._update_device_info()` 只做“连接设备同步”，并调用 `device_parser.sync_connected_devices()`。
+2. **队列模型**
+   - `DeviceParser` 维护 `_await_queue`（检查中）与 `_ready_queue`（可展示）双队列，以及 `_classify_queue` 分类队列。
+   - UI 展示列表来自 `DeviceParser.get_devices()`，且只返回 `target_device/unknown`。
+3. **分类策略**
+   - 分类入口是 `DeviceClassificationStrategy.classify_device()`：
+     - `CreateAdbDevice()` 成功识别为 `AC8267Device` → 目标设备；
+     - ADB 识别失败但 `snapshot` 成功 → 视为 Cube（转交 `CubeManager.add_cube`）；
+     - 两者都失败 → 标记 Unknown（保留在目标设备列表）。
+4. **刷新行为**
+   - `refresh_device(serial)`：ready 设备回退到 await；若该 serial 不在目标队列，则转发到 `cube_manager.refresh_cube(serial)`。
+   - `refresh_all_device()`：将 ready 全量回退 await，触发重新解析。
+5. **状态与回调**
+   - await 设备显示 `Checking...`，unknown 设备显示 `Unknown`，uuid 为空。
+   - await 解析完成后若状态为 `unauthorized` 且有 uuid，会触发 `unauthorized_ready` 事件给自动授权流程。
+
+## 九、Cube Management（按当前实现）
+1. **职责**
+   - `CubeManager` 只管理 authenticator（Cube）及其 `snapshot` 刷新，不处理 target 设备解析。
+2. **状态集合**
+   - `_cubes`：已确认的 Cube 快照；
+   - `_pending_cubes`：待确认/待重试；
+   - `_refresh_queue`：立即刷新队列。
+3. **刷新机制**
+   - `add_cube/refresh_cube` 会将 serial 放入 pending + refresh_queue，后台线程优先立即刷新。
+   - 即时刷新失败时会保留 pending 并重试，避免误降级。
+   - 线程按 `refresh_interval` 周期刷新全部已确认 Cube。
+4. **回调传播**
+   - Cube 快照有变化才发 `authenticator_update`，由 `DeviceParser._on_cube_update()` 继续向上透传到 UI。
+5. **边界要求**
+   - 不要在 `DeviceMonitor` 或 UI 层直接维护 Cube 缓存；统一通过 `CubeManager`。
+
+## 十、自动授权与并发注意事项
+1. **自动授权入口**
+   - `AuthenticationManager` 监听 `device_parser` 的 `unauthorized_ready` 回调并入队。
+2. **串行执行与去重**
+   - 自动授权队列使用 `_queued_serials/_in_progress_serials` 去重，避免并发重复激活同一设备。
+3. **授权后刷新**
+   - 自动授权完成后调用 `refresh_all_cube()` + `refresh_device(serial)`：前者刷新全部 Cube 快照，后者仅触发当前目标设备重解析。
+4. **线程约束**
+   - `DeviceMonitor/DeviceParser/CubeManager/AuthenticationManager` 后台线程均为 `daemon=True`。
+   - 涉及 UI 更新仍必须回主线程（`root.after(...)`）。
