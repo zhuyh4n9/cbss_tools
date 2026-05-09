@@ -7,6 +7,7 @@ from tkinter import ttk, messagebox, filedialog
 import threading
 import os
 import sys
+import importlib
 import time
 import logging
 from datetime import datetime
@@ -16,45 +17,64 @@ if __package__ in (None, ""):
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
-    from src.config_manager import ConfigManager
-    from src.log_manager import LogManager
-    from src.adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
-    from src.device_monitor import DeviceMonitor
-    from src.auth_manager import AuthenticationManager
-    from src.prompt_manager import PromptManager
-    from src.build_options import SIMULATED_DEVICE_STATUS_OPTIONS
-    from src.diaglog import (
-        LogLevelDialog,
-        LogViewDialog,
-        AuthenticatorOperationDialog,
-        AuthenticationDialog,
-        BatchAuthenticationDialog,
-        ProgressDialog,
-        WifiDisconnectDialog,
-        WifiConfigDialog,
-        WifiScanDialog,
-        DiagnosticDialog,
-    )
+    module_prefix = "src"
 else:
-    from .config_manager import ConfigManager
-    from .log_manager import LogManager
-    from .adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
-    from .device_monitor import DeviceMonitor
-    from .auth_manager import AuthenticationManager
-    from .prompt_manager import PromptManager
-    from .build_options import SIMULATED_DEVICE_STATUS_OPTIONS
-    from .diaglog import (
-        LogLevelDialog,
-        LogViewDialog,
-        AuthenticatorOperationDialog,
-        AuthenticationDialog,
-        BatchAuthenticationDialog,
-        ProgressDialog,
-        WifiDisconnectDialog,
-        WifiConfigDialog,
-        WifiScanDialog,
-        DiagnosticDialog,
+    module_prefix = __package__
+
+
+def _load_dependencies(prefix):
+    config_module = importlib.import_module(f"{prefix}.config_manager")
+    log_module = importlib.import_module(f"{prefix}.log_manager")
+    adb_module = importlib.import_module(f"{prefix}.adb_manager")
+    device_monitor_module = importlib.import_module(f"{prefix}.device_monitor")
+    auth_module = importlib.import_module(f"{prefix}.auth_manager")
+    prompt_module = importlib.import_module(f"{prefix}.prompt_manager")
+    build_options_module = importlib.import_module(f"{prefix}.build_options")
+    diaglog_module = importlib.import_module(f"{prefix}.diaglog")
+    return (
+        config_module.ConfigManager,
+        log_module.LogManager,
+        adb_module.ADBManager,
+        adb_module.DeviceInfo,
+        adb_module.AuthenticatorInfo,
+        device_monitor_module.DeviceMonitor,
+        auth_module.AuthenticationManager,
+        prompt_module.PromptManager,
+        build_options_module.SIMULATED_DEVICE_STATUS_OPTIONS,
+        diaglog_module.LogLevelDialog,
+        diaglog_module.LogViewDialog,
+        diaglog_module.AuthenticatorOperationDialog,
+        diaglog_module.AuthenticationDialog,
+        diaglog_module.BatchAuthenticationDialog,
+        diaglog_module.ProgressDialog,
+        diaglog_module.WifiDisconnectDialog,
+        diaglog_module.WifiConfigDialog,
+        diaglog_module.WifiScanDialog,
+        diaglog_module.DiagnosticDialog,
     )
+
+
+(
+    ConfigManager,
+    LogManager,
+    ADBManager,
+    DeviceInfo,
+    AuthenticatorInfo,
+    DeviceMonitor,
+    AuthenticationManager,
+    PromptManager,
+    SIMULATED_DEVICE_STATUS_OPTIONS,
+    LogLevelDialog,
+    LogViewDialog,
+    AuthenticatorOperationDialog,
+    AuthenticationDialog,
+    BatchAuthenticationDialog,
+    ProgressDialog,
+    WifiDisconnectDialog,
+    WifiConfigDialog,
+    WifiScanDialog,
+    DiagnosticDialog,
+) = _load_dependencies(module_prefix)
 
 NETWORK_MONITOR_THREAD_JOIN_TIMEOUT = 0.1
 
