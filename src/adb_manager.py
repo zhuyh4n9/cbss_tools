@@ -208,6 +208,7 @@ class ADBManager:
 
     @staticmethod
     def _normalize_identifier(value: Optional[str]) -> str:
+        """规范化设备标识，去除首尾空格、tab 和换行符。"""
         return str(value or "").strip(" \t\r\n")
 
     def activate_device(self, serial: str, sign_hex: str) -> CommandResult:

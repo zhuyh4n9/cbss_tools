@@ -32,7 +32,7 @@ class TestAdbManagerIdentifierTrim(unittest.TestCase):
 
         self.assertEqual([d.serial for d in devices], ["ABC123", "DEF456"])
 
-    def test_get_device_uuid_trims_result_and_serial_input(self):
+    def test_get_device_uuid_normalizes_identifiers(self):
         with patch.object(self.manager, "execute_adb_command") as mock_exec:
             mock_exec.return_value = CommandResult(
                 success=True,
