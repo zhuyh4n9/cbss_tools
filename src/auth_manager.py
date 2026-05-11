@@ -138,6 +138,8 @@ class AuthenticationManager:
                 return
 
             with self._queue_lock:
+                if serial in self._auto_activation_completed_serials:
+                    return
                 if serial in self._queued_serials or serial in self._in_progress_serials:
                     return
                 self._auto_activation_completed_serials.discard(serial)
@@ -151,6 +153,10 @@ class AuthenticationManager:
     def _on_device_update(self, devices: List[DeviceInfo]):
         self._enqueue_unauthorized_devices_from_update(devices)
         current_serials = {str((d.serial if d else "") or "").strip() for d in (devices or [])}
+        with self._queue_lock:
+            self._auto_activation_completed_serials.intersection_update(current_serials)
+            self._queued_serials.intersection_update(current_serials)
+            self._in_progress_serials.intersection_update(current_serials)
         with self._blocked_lock:
             stale = [serial for serial in self._blocked_activation_devices.keys() if serial not in current_serials]
             for serial in stale:
@@ -216,12 +222,15 @@ class AuthenticationManager:
     def _pick_authenticator(self) -> Optional[str]:
         ready_authenticators = []
         available_authenticators = []
+        simulated_infos = self.get_simulated_cube_infos()
         for serial in self.get_available_authenticators():
             available_authenticators.append(serial)
-            if self.is_simulated_cube(serial):
-                ready_authenticators.append(serial)
-                continue
             auth_info = self.device_monitor.get_authenticator_by_serial(serial)
+            if auth_info is None:
+                auth_info = simulated_infos.get(serial)
+            if auth_info is None:
+                logging.warning("未找到Cube信息，跳过Ready判定: %s", serial)
+                continue
             time_status = self._normalize_status(getattr(auth_info, 'time_status', ''))
             if time_status == self._READY_TIME_STATUS:
                 ready_authenticators.append(serial)
@@ -241,6 +250,16 @@ class AuthenticationManager:
 
     def _is_device_still_unauthorized(self, serial: str) -> bool:
         try:
+            target_getter = getattr(self.device_monitor, "get_target_device", None)
+            if callable(target_getter):
+                target = target_getter(serial)
+                if target is not None:
+                    get_status = getattr(target, "getStatus", None)
+                    get_uuid = getattr(target, "getUuid", None)
+                    status = (get_status() if callable(get_status) else "") or ""
+                    uuid = (get_uuid() if callable(get_uuid) else "") or ""
+                    return status.strip().lower() == "unauthorized" and bool(str(uuid).strip())
+
             device = self.device_monitor.get_device_by_serial(serial)
             if not device:
                 return False
@@ -300,6 +319,13 @@ class AuthenticationManager:
 
                 # 自动授权后刷新 Cube 和当前 Target Device（仅在未停止时执行）
                 if self._worker_running and not self._stop_event.is_set():
+                    if result.get('success'):
+                        update_devices = getattr(self.device_monitor, "update_devices", None)
+                        if callable(update_devices):
+                            try:
+                                update_devices()
+                            except Exception as update_error:
+                                logging.warning("自动授权后刷新设备状态失败: %s", update_error)
                     self.device_monitor.refresh_all_cube()
                     self.device_monitor.refresh_device(serial)
             except Exception as e:
@@ -374,6 +400,12 @@ class AuthenticationManager:
             return self._perform_authentication(device_serial, authenticator_serial, progress_callback)
         finally:
             self._is_authenticating = False
+            try:
+                refresh_device = getattr(self.device_monitor, "refresh_device", None)
+                if callable(refresh_device):
+                    refresh_device(device_serial)
+            except Exception as refresh_error:
+                logging.warning("授权后刷新设备状态失败: %s", refresh_error)
 
     def authenticate_all_devices(self, authenticator_serial: str,
                                progress_callback: Optional[Callable] = None) -> dict:
@@ -466,35 +498,16 @@ class AuthenticationManager:
             if progress_callback:
                 progress_callback("正在获取设备UUID...")
 
-            device_uuid = target_device.getUuid()
-            if not device_uuid:
-                if target_device.getDetectionMethod().strip().lower() != "adb":
-                    error_msg = "设备UUID为空"
-                    logging.error(error_msg)
-                    return {
-                        'success': False,
-                        'message': error_msg,
-                        'details': ''
-                    }
-                uuid_result = self.adb_manager.get_device_uuid(device_serial)
-                if not uuid_result.success:
-                    error_msg = f"获取设备UUID失败: {uuid_result.error_message}"
-                    logging.error(error_msg)
-                    return {
-                        'success': False,
-                        'message': error_msg,
-                        'details': uuid_result.raw_output
-                    }
-                device_uuid = uuid_result.result_data
-                target_device.setUuid(device_uuid)
-            if not device_uuid:
-                error_msg = "设备UUID为空"
+            uuid_result = target_device.fetch_uuid()
+            if not uuid_result.success:
+                error_msg = f"获取设备UUID失败: {uuid_result.error_message}"
                 logging.error(error_msg)
                 return {
                     'success': False,
                     'message': error_msg,
-                    'details': ''
+                    'details': uuid_result.raw_output
                 }
+            device_uuid = (uuid_result.result_data or "").strip()
 
             logging.info(f"获取到设备UUID: {device_uuid}")
 
@@ -557,15 +570,10 @@ class AuthenticationManager:
             if progress_callback:
                 progress_callback("正在验证激活状态...")
 
-            if target_device.getDetectionMethod().strip().lower() == "adb":
-                state_result = self.adb_manager.get_device_state(device_serial)
-                verify_success = state_result.success and state_result.result_data == "Authorized"
-                verify_error = state_result.error_message
-                verify_output = state_result.raw_output
-            else:
-                verify_success = (target_device.getStatus() or "").strip().lower() == "authorized"
-                verify_error = ""
-                verify_output = target_device.getStatus()
+            state_result = target_device.fetch_state()
+            verify_success = state_result.success and (state_result.result_data or "").strip() == "Authorized"
+            verify_error = state_result.error_message
+            verify_output = state_result.raw_output or state_result.result_data
 
             if verify_success:
                 success_msg = f"设备激活成功: {device_serial}"
@@ -693,14 +701,22 @@ class AuthenticationManager:
     def perform_cube_operation(self, operation: str, serial: str, payload: str):
         cube = self._resolve_cube(serial)
         if operation == 'lock':
-            return cube.lock(payload)
-        if operation == 'unlock':
-            return cube.unlock(payload)
-        if operation == 'activate':
-            return cube.activate(payload)
-        if operation == 'config':
-            return cube.config(payload)
-        raise ValueError(f"Unsupported cube operation: {operation}")
+            result = cube.lock(payload)
+        elif operation == 'unlock':
+            result = cube.unlock(payload)
+        elif operation == 'activate':
+            result = cube.activate(payload)
+        elif operation == 'config':
+            result = cube.config(payload)
+        else:
+            raise ValueError(f"Unsupported cube operation: {operation}")
+
+        if result and result.success:
+            try:
+                self.device_monitor.refresh_all_cube()
+            except Exception as refresh_error:
+                logging.warning("Cube操作后刷新信息失败: %s", refresh_error)
+        return result
 
     def _resolve_cube(self, serial: str) -> ICube:
         serial = str(serial or "").strip()

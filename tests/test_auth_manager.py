@@ -35,6 +35,7 @@ class _FakeDeviceMonitor:
         self.refresh_all_cube_calls = 0
         self.refresh_device_calls = []
         self.refresh_all_device_calls = 0
+        self.update_devices_calls = 0
         self.device_sources = []
         self._devices = {}
         self._simulated_counter = 0
@@ -50,6 +51,11 @@ class _FakeDeviceMonitor:
 
     def refresh_all_device(self):
         self.refresh_all_device_calls += 1
+
+    def update_devices(self):
+        self.update_devices_calls += 1
+        for serial, simulated in self._simulated_objects.items():
+            self._devices[serial] = simulated.to_device_info()
 
     def get_authenticator_by_serial(self, serial: str):
         return self.authenticators.get(serial)
@@ -137,6 +143,22 @@ class _FakeAdbManager:
         self.events.append("precheck_device_state")
         return CommandResult(success=True, status_code=0, result_data="Unauthorized", raw_output="Unauthorized")
 
+    def authenticator_lock(self, authenticator_serial: str, token: str):
+        self.events.append("authenticator_lock")
+        return CommandResult(success=True, status_code=0, result_data="ok", raw_output="ok")
+
+    def authenticator_unlock(self, authenticator_serial: str, token: str):
+        self.events.append("authenticator_unlock")
+        return CommandResult(success=True, status_code=0, result_data="ok", raw_output="ok")
+
+    def authenticator_activate(self, authenticator_serial: str, token: str):
+        self.events.append("authenticator_activate")
+        return CommandResult(success=True, status_code=0, result_data="ok", raw_output="ok")
+
+    def authenticator_config(self, authenticator_serial: str, config: str):
+        self.events.append("authenticator_config")
+        return CommandResult(success=True, status_code=0, result_data="ok", raw_output="ok")
+
 
 class _TestableAuthenticationManager(AuthenticationManager):
     TEST_SERIAL = "DEV-001"
@@ -204,6 +226,66 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         self.assertEqual(fake_monitor.refresh_all_cube_calls, 1)
         self.assertEqual(fake_monitor.refresh_device_calls, [manager.TEST_SERIAL])
         self.assertEqual(fake_monitor.refresh_all_device_calls, 0)
+        self.assertEqual(fake_monitor.update_devices_calls, 1)
+
+    def test_auto_activation_simulator_duplicate_queue_consumes_one_token_only(self):
+        fake_monitor = _FakeDeviceMonitor()
+        fake_adb_manager = _FakeAdbManager()
+        manager = AuthenticationManager(adb_manager=fake_adb_manager, device_monitor=fake_monitor)
+        simulated = fake_monitor.add_simulated_device("Unauthorized", serial_id="SIM-AUTO-ONCE-001", uuid="UUID-AUTO-ONCE-001")
+
+        manager._auto_activation_enabled = True
+        manager._worker_running = True
+        manager._stop_event.clear()
+        manager._queued_serials.add(simulated.serial)
+        manager._activate_queue.put(simulated.serial)
+        manager._activate_queue.put(simulated.serial)
+        manager._activate_queue.put(None)
+
+        manager._activate_worker_loop()
+
+        self.assertEqual(fake_adb_manager.events.count("authenticator_sign"), 1)
+        self.assertGreaterEqual(fake_monitor.update_devices_calls, 1)
+
+    def test_auto_activation_simulated_cube_and_device_duplicate_queue_consumes_one_token(self):
+        fake_monitor = _FakeDeviceMonitor()
+        manager = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=fake_monitor)
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch("src.auth_manager.ENABLE_SIMULATED_DEVICE", True):
+            key_path = f"{tmpdir}/p256.pem"
+            persist_path = f"{tmpdir}/cube.json"
+            _write_valid_private_key(key_path)
+            cube_serial = manager.create_simulated_cube(
+                expired_date="2099-12-31",
+                counter=5,
+                private_key_path=key_path,
+                cube_id="SIM-CUBE-ID",
+                oem_id="SIM-OEM",
+                persist_path=persist_path,
+                serial_id="SIM-CUBE-TEST-001",
+            )
+            fake_monitor.authenticators = {}
+            simulated = fake_monitor.add_simulated_device(
+                "Unauthorized",
+                serial_id="SIM-AUTO-SIMCUBE-001",
+                uuid="a48cf51d3257f4ad8bee55f500e91abc65db4293f39f6effebf4085af411f7a3",
+            )
+
+            manager._auto_activation_enabled = True
+            manager._worker_running = True
+            manager._stop_event.clear()
+            manager._queued_serials.add(simulated.serial)
+            manager._activate_queue.put(simulated.serial)
+            manager._activate_queue.put(simulated.serial)
+            manager._activate_queue.put(None)
+
+            manager._activate_worker_loop()
+
+            self.assertEqual(fake_monitor.get_simulated_device(simulated.serial).getStatus(), "Authorized")
+            self.assertTrue(manager.is_device_auto_activation_completed(simulated.serial))
+            cube_info = manager.get_simulated_cube_infos()[cube_serial]
+            self.assertEqual(cube_info.counter, 4)
+            self.assertEqual(cube_info.authorized_device_num, 1)
 
     def test_refresh_cube_after_activation(self):
         events = []
@@ -240,6 +322,28 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         self.assertEqual(fake_monitor.refresh_all_cube_calls, 1)
         self.assertGreater(len(log_output.output), 0)
 
+    def test_authenticate_device_refreshes_target_device_state(self):
+        fake_monitor = _FakeDeviceMonitor()
+        fake_adb_manager = _FakeAdbManager()
+        manager = AuthenticationManager(adb_manager=fake_adb_manager, device_monitor=fake_monitor)
+
+        result = manager.authenticate_device("DEV-001", "CUBE-001")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(fake_monitor.refresh_device_calls, ["DEV-001"])
+
+    def test_cube_operation_success_refreshes_cube_info(self):
+        events = []
+        fake_monitor = _FakeDeviceMonitor(events=events)
+        fake_adb_manager = _FakeAdbManager(events=events)
+        manager = AuthenticationManager(adb_manager=fake_adb_manager, device_monitor=fake_monitor)
+
+        result = manager.perform_cube_operation("activate", "CUBE-001", "TOKEN")
+
+        self.assertTrue(result.success)
+        self.assertIn("authenticator_activate", events)
+        self.assertEqual(fake_monitor.refresh_all_cube_calls, 1)
+
     def test_pick_authenticator_prefers_ready_time_status(self):
         fake_monitor = _FakeDeviceMonitor()
         fake_monitor.authenticators = {
@@ -265,7 +369,7 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
 
         self.assertEqual(picked, "CUBE-A")
 
-    def test_unauthorized_enqueue_clears_auto_completed_flag(self):
+    def test_unauthorized_enqueue_ignores_completed_until_device_removed(self):
         fake_monitor = _FakeDeviceMonitor()
         manager = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=fake_monitor)
         manager._auto_activation_enabled = True
@@ -274,6 +378,11 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         manager._auto_activation_completed_serials.add(serial)
         manager._on_unauthorized_ready(DeviceInfo(serial=serial, status="Unauthorized", uuid="UUID-001"))
 
+        self.assertFalse(manager.is_device_queued_for_auto_activation(serial))
+        self.assertTrue(manager.is_device_auto_activation_completed(serial))
+
+        manager._on_device_update([])
+        manager._on_unauthorized_ready(DeviceInfo(serial=serial, status="Unauthorized", uuid="UUID-001"))
         self.assertTrue(manager.is_device_queued_for_auto_activation(serial))
         self.assertFalse(manager.is_device_auto_activation_completed(serial))
 

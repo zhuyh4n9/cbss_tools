@@ -1,5 +1,46 @@
 # CBSS工具更新日志
 
+## v3.1.12 (2026-05-11)
+
+### 问题修复
+1. **修复自动授权对模拟设备的状态判定仍可能使用旧快照问题**
+   - 自动授权前置判定 `is_device_still_unauthorized` 改为优先读取 `get_target_device` 的实时状态（含 SimulatorDevice）
+   - 避免队列中重复 serial 在首轮成功后再次被当作 Unauthorized 执行授权
+
+2. **增加自动授权完成设备的重复入队保护**
+   - `unauthorized_ready` 入队前新增 completed 集合拦截
+   - 设备移除（插拔）时自动清理 completed/queued/in-progress 集合，允许重新插入后再次自动授权
+
+3. **新增模拟Cube + 模拟Device 回归测试**
+   - 覆盖重复排队场景，验证仅消耗一次模拟Cube Token（counter 仅减少 1）
+
+## v3.1.11 (2026-05-11)
+
+### 问题修复
+1. **修复自动授权下 SimulatorTargetDevice 可能重复授权问题**
+   - 自动授权成功后先触发 `DeviceMonitor.update_devices()` 同步最新设备状态，再执行后续解析刷新
+   - 避免解析层仍持有旧的 Unauthorized 快照导致设备重复入队、重复签名
+
+2. **修复模拟设备自动授权可能触发“状态非Unauthorized”报错**
+   - 在重复排队场景下，第二次授权会因设备已变为 Authorized 而失败；本次修复后不再进入第二次授权
+
+3. **补充回归测试**
+   - 新增自动授权重复排队场景测试，验证签名仅执行一次（避免额外 Token 消耗）
+
+## v3.1.10 (2026-05-11)
+
+### 问题修复
+1. **修复 SimulatorDevice 自动授权失败问题**
+   - 统一授权主流程改为通过 `ITargetDevice` 接口获取 UUID 与状态，不再在 `AuthenticationManager` 内按设备来源分支
+   - 模拟设备与真实设备统一经过同一授权步骤（获取UUID → 签名 → 激活 → 状态校验）
+
+2. **修复 Simulator 设备解析刷新会重置状态的问题**
+   - `DeviceParser` 进入 await 阶段时改为调用设备对象自身的 `to_await_device()` 规则
+   - `SimulatorDevice` 保留内部状态与 UUID，不再被解析流程重置为 `Checking...`
+
+3. **补充回归测试**
+   - 新增/更新单元测试覆盖模拟设备 await 刷新状态保持与统一授权接口行为
+
 ## v3.1.9 (2026-05-11)
 
 ### 问题修复

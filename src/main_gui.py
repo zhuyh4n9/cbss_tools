@@ -996,7 +996,7 @@ class AuthenticatorToolGUI:
     def show_about(self):
         """显示关于信息"""
         company = self.config_manager.get('About', 'company', 'Autochips Inc')
-        version = self.config_manager.get('General', 'version', '3.1.9')
+        version = self.config_manager.get('General', 'version', '3.1.12')
         description = self.config_manager.get('About', 'description', self.prompt_mgr.get('Dialogs.about_desc'))
 
         about_text = f"""
