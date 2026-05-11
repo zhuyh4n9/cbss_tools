@@ -375,9 +375,11 @@ class DeviceMonitor:
     def sim_detector(self) -> SimulatorDeviceDetector:
         return self._sim_detector
 
-    def add_simulated_device(self, status: str) -> DeviceInfo:
+    def add_simulated_device(self, status: str, uuid: str = "", serial_number: str = "",
+                             simulate_activate_failure: bool = False) -> DeviceInfo:
         """创建模拟设备并立即加入target_devices"""
-        device_info = self._sim_detector.add_device(status)
+        device_info = self._sim_detector.add_device(status, uuid=uuid, serial_number=serial_number,
+                                                     simulate_activate_failure=simulate_activate_failure)
         # 立即加入target_devices并通知UI
         self.target_devices.append(device_info)
         self._notify_callbacks('device_update', self.target_devices)

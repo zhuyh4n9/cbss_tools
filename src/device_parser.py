@@ -47,6 +47,37 @@ class DeviceParser:
         self._notify_callbacks('authenticator_update', cubes)
         self._notify_callbacks('authenticator_serials_update', list(cubes.keys()))
 
+    def kick(self):
+        """遍历全部设备，寻找dirty状态设备，执行refreshDeviceMeta"""
+        with self._lock:
+            dirty_serials = []
+            for serial, dev in self._ready_queue.items():
+                if dev.isDirty():
+                    dirty_serials.append(serial)
+            for serial, dev in self._await_queue.items():
+                if dev.isDirty():
+                    dirty_serials.append(serial)
+
+        for serial in dirty_serials:
+            with self._lock:
+                dev = self._ready_queue.get(serial) or self._await_queue.get(serial)
+            if dev is None:
+                continue
+            try:
+                dev.refreshDeviceMeta()
+            except Exception as e:
+                logging.error(f"refreshDeviceMeta 失败 [{serial}]: {e}")
+
+        if dirty_serials:
+            self._notify_callbacks('device_update', self.get_devices())
+            # 刷新后检查是否有设备从dirty恢复，重新触发unauthorized_ready
+            for serial in dirty_serials:
+                with self._lock:
+                    dev = self._ready_queue.get(serial)
+                if dev is not None and not dev.isDirty():
+                    if dev.getStatus().strip().lower() == "unauthorized" and dev.getUuid():
+                        self._notify_callbacks('unauthorized_ready', copy.deepcopy(dev.to_device_info()))
+
     def start(self):
         if self._running:
             return
@@ -305,7 +336,7 @@ class DeviceParser:
                     if not base:
                         continue
 
-                    decision = self._classification_strategy.classify_device(classify_serial, base, known_cube)
+                    decision = self._classification_strategy.classify_device(classify_serial, base, known_cube, self.kick)
 
                     with self._lock:
                         base = self._base_devices.get(classify_serial)

@@ -6,19 +6,22 @@ from typing import Optional
 from .adb_manager import ADBManager, CommandResult, DeviceInfo
 
 
-SUPPORTED_TARGET_STATUSES = {"authorized", "unauthorized", "pirated", "unknown"}
+SUPPORTED_TARGET_STATUSES = {"authorized", "unauthorized", "pirated", "unknown", "authorizationfailure"}
 
 
 def _normalize_status(status: str) -> str:
     normalized_status = (status or "").strip().lower()
     if normalized_status in SUPPORTED_TARGET_STATUSES:
+        if normalized_status == "authorizationfailure":
+            return "AuthorizationFailure"
         return normalized_status.capitalize()
     return "Unknown"
 
 
 class ITargetDevice(ABC):
     @staticmethod
-    def CreateSimulation(status: str, serial_number: str = "", uuid: Optional[str] = None):
+    def CreateSimulation(status: str, serial_number: str = "", uuid: Optional[str] = None,
+                         simulate_activate_failure: bool = False):
         serial = (serial_number or "").strip() or "SIM-0000"
         normalized_status = _normalize_status(status)
         simulation_uuid = uuid or secrets.token_hex(32)
@@ -29,6 +32,7 @@ class ITargetDevice(ABC):
             uuid=simulation_uuid,
             status=normalized_status,
             usb_port="SIM",
+            simulate_activate_failure=simulate_activate_failure,
         )
 
     @staticmethod
@@ -87,7 +91,7 @@ class ITargetDevice(ABC):
         pass
 
     @abstractmethod
-    def markDirty(self, parser_kick: 'DeviceParser' = None) -> None:
+    def markDirty(self, parser_kick=None) -> None:
         """标记设备状态不可信，若未锁定则设为dirty并kick parser刷新"""
         pass
 
@@ -97,7 +101,7 @@ class ITargetDevice(ABC):
         pass
 
     @abstractmethod
-    def unlock(self, parser_kick: 'DeviceParser' = None) -> None:
+    def unlock(self, parser_kick=None) -> None:
         """解锁设备，检查待处理dirty事件并kick parser"""
         pass
 
@@ -221,11 +225,42 @@ class IAdbDevice(TargetDeviceAbstract, ABC):
 
 
 class AC8267Device(IAdbDevice):
-    pass
+    def refreshDeviceMeta(self) -> None:
+        """通过ADB获取设备元信息"""
+        uuid_result = self.adb_manager.get_device_uuid(self.getSerialNumber())
+        state_result = self.adb_manager.get_device_state(self.getSerialNumber())
+        if uuid_result.success and uuid_result.result_data:
+            self.setUuid(uuid_result.result_data.strip())
+        if state_result.success and state_result.result_data:
+            self.setStatus(state_result.result_data.strip())
+        self._dirty = False
+
+    def activate(self, signature: str) -> CommandResult:
+        """锁定→激活→markDirty→解锁。失败时标记AuthorizationFailure"""
+        if self.isDirty():
+            return CommandResult(False, 1, error_message="设备状态不可信，请等待刷新后重试")
+        if self.getStatus().lower() == "authorizationfailure":
+            return CommandResult(False, 1, error_message="设备处于AuthorizationFailure状态，无法激活")
+        if not self.lock():
+            return CommandResult(False, 1, error_message="设备已被锁定，请重试")
+        try:
+            result = super().activate(signature)
+            if result.success:
+                self.markDirty()
+            else:
+                self.setStatus("AuthorizationFailure")
+            return result
+        finally:
+            self.unlock()
 
 
 class UnknownAdbDevice(IAdbDevice):
+    def refreshDeviceMeta(self) -> None:
+        self._dirty = False
+
     def activate(self, signature: str) -> CommandResult:
+        if self.isDirty():
+            return CommandResult(False, 1, error_message="设备状态不可信，请等待刷新后重试")
         return CommandResult(
             success=False,
             status_code=1,
@@ -235,16 +270,46 @@ class UnknownAdbDevice(IAdbDevice):
 
 
 class SimulatorDevice(TargetDeviceAbstract):
+    def __init__(self, detection_method: str, serial_number: str, is_simulation: bool = False,
+                 uuid: str = "", status: str = "Unknown", usb_port: str = "",
+                 simulate_activate_failure: bool = False):
+        super().__init__(
+            detection_method=detection_method,
+            serial_number=serial_number,
+            is_simulation=is_simulation,
+            uuid=uuid,
+            status=status,
+            usb_port=usb_port,
+        )
+        self.simulate_activate_failure = bool(simulate_activate_failure)
+
+    def refreshDeviceMeta(self) -> None:
+        """模拟设备在__init__中已完成元信息设置，此方法不操作"""
+        self._dirty = False
+
     def activate(self, signature: str) -> CommandResult:
-        if self.getStatus().lower() != "unauthorized":
-            return CommandResult(
-                success=False,
-                status_code=1,
-                error_message=f"模拟设备状态非Unauthorized，无法激活: {self.getStatus()}",
-                raw_output="",
-            )
-        self.setStatus("Authorized")
-        return CommandResult(success=True, status_code=0, result_data="Authorized", raw_output="")
+        """激活模拟设备"""
+        if self.isDirty():
+            return CommandResult(False, 1, error_message="设备状态不可信，请等待刷新后重试")
+        if self.getStatus().lower() == "authorizationfailure":
+            return CommandResult(False, 1, error_message="设备处于AuthorizationFailure状态，无法激活")
+        if not self.lock():
+            return CommandResult(False, 1, error_message="设备已被锁定，请重试")
+        try:
+            if self.simulate_activate_failure:
+                self.setStatus("AuthorizationFailure")
+                return CommandResult(False, 1, error_message="模拟设备激活失败（simulate_activate_failure）", raw_output="")
+            if self.getStatus().lower() != "unauthorized":
+                return CommandResult(
+                    success=False,
+                    status_code=1,
+                    error_message=f"模拟设备状态非Unauthorized，无法激活: {self.getStatus()}",
+                    raw_output="",
+                )
+            self.setStatus("Authorized")
+            return CommandResult(success=True, status_code=0, result_data="Authorized", raw_output="")
+        finally:
+            self.unlock()
 
 
 class UnknownDevice(TargetDeviceAbstract):
@@ -261,7 +326,12 @@ class UnknownDevice(TargetDeviceAbstract):
     def getUuid(self) -> str:
         return "UnknownDevice"
 
+    def refreshDeviceMeta(self) -> None:
+        self._dirty = False
+
     def activate(self, signature: str) -> CommandResult:
+        if self.isDirty():
+            return CommandResult(False, 1, error_message="设备状态不可信，请等待刷新后重试")
         return CommandResult(
             success=False,
             status_code=1,

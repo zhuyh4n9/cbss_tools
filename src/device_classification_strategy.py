@@ -16,7 +16,7 @@ class DeviceClassificationStrategy:
     def __init__(self, adb_manager: ADBManager):
         self._adb_manager = adb_manager
 
-    def classify_device(self, serial: str, base_device: TargetDeviceAbstract, known_cube: bool) -> ClassificationDecision:
+    def classify_device(self, serial: str, base_device: TargetDeviceAbstract, known_cube: bool, parser_kick=None) -> ClassificationDecision:
         if known_cube:
             return ClassificationDecision(ready_device=None, should_add_cube=False, should_mark_unknown=False)
 
@@ -27,6 +27,8 @@ class DeviceClassificationStrategy:
                 usb_port=base_device.getConnectedUsbPort(),
             )
             if isinstance(detected_device, AC8267Device):
+                # 分类完成后标记dirty，触发parser刷新元信息
+                detected_device.markDirty(parser_kick)
                 return ClassificationDecision(ready_device=detected_device)
 
             if isinstance(detected_device, UnknownAdbDevice):

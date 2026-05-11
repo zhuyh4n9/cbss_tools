@@ -19,6 +19,7 @@ class AuthenticationManager:
     def __init__(self, adb_manager: ADBManager, device_monitor: DeviceMonitor):
         self.adb_manager = adb_manager
         self.device_monitor = device_monitor
+        self._log_manager = None  # 由 main_gui 设置
 
         self._authentication_lock = threading.Lock()
         self._is_authenticating = False
@@ -327,7 +328,14 @@ class AuthenticationManager:
 
     def _perform_authentication(self, device_serial: str, authenticator_serial: str,
                               progress_callback: Optional[Callable] = None) -> dict:
-        """执行单个设备的激活流程（统一处理真实/模拟设备）"""
+        """执行单个设备的激活流程（lock→check→sign→log→double check→activate）"""
+        target = None
+        cube = None
+        cube_id = str(authenticator_serial or "")
+        device_uuid = ""
+        signature = ""
+        log_mgr = self._log_manager
+
         try:
             logging.info(f"开始激活设备: {device_serial}")
 
@@ -340,107 +348,165 @@ class AuthenticationManager:
                     'details': ''
                 }
 
-            # 步骤1: 获取设备UUID
-            if progress_callback:
-                progress_callback("正在获取设备UUID...")
-
-            device_uuid = (target.getUuid() or "").strip()
-            if not device_uuid:
-                error_msg = "设备UUID为空"
-                logging.error(error_msg)
+            # 检查AuthorizationFailure状态
+            if target.getStatus().lower() == "authorizationfailure":
                 return {
                     'success': False,
-                    'message': error_msg,
+                    'message': f'设备 {device_serial} 处于AuthorizationFailure状态，无法激活',
                     'details': ''
                 }
 
-            logging.info(f"获取到设备UUID: {device_uuid}")
-
-            # 步骤2: 使用激活盒子签名
+            # 步骤1: 锁定设备
             if progress_callback:
-                progress_callback("正在使用激活盒子签名...")
-
-            sign_result = cube.sign_uuid(device_uuid)
-            if not sign_result.success:
-                error_msg = f"激活盒子签名失败: {sign_result.error_message}"
-                logging.error(error_msg)
+                progress_callback("正在锁定设备...")
+            if not target.lock():
                 return {
                     'success': False,
-                    'message': error_msg,
-                    'details': sign_result.raw_output
+                    'message': f'无法锁定设备: {device_serial}',
+                    'details': ''
                 }
 
-            signature = (sign_result.result_data or "").strip()
-            if not signature:
-                error_msg = "签名结果为空"
-                logging.error(error_msg)
-                return {
-                    'success': False,
-                    'message': error_msg,
-                    'details': sign_result.raw_output
-                }
-
-            logging.info(f"获取到签名: {signature}")
-
-            # 步骤3: 激活设备（ITargetDevice.activate 对真实/模拟设备统一处理）
-            if progress_callback:
-                progress_callback("正在激活设备...")
-
-            activate_result = target.activate(signature)
-            if not activate_result.success:
-                error_msg = f"设备激活失败: {activate_result.error_message}"
-                logging.error(error_msg)
-                return {
-                    'success': False,
-                    'message': error_msg,
-                    'details': activate_result.raw_output
-                }
-
-            logging.info(f"设备激活成功: {device_serial}")
             try:
-                self.device_monitor.refresh_all_cube()
-            except Exception as refresh_error:
-                logging.warning(f"激活后刷新Cube失败: {refresh_error}")
+                # 步骤2: 检查设备状态
+                if progress_callback:
+                    progress_callback("正在检查设备状态...")
+                device_uuid = (target.getUuid() or "").strip()
+                if not device_uuid:
+                    target.markDirty()
+                    return {
+                        'success': False,
+                        'message': "设备UUID为空",
+                        'details': ''
+                    }
+                status = target.getStatus().strip().lower()
+                if status != "unauthorized":
+                    target.markDirty()
+                    return {
+                        'success': False,
+                        'message': f'设备状态不正确: {target.getStatus()}',
+                        'details': ''
+                    }
 
-            # 步骤4: 验证激活状态（真实设备通过ADB，模拟设备直接返回成功）
-            if progress_callback:
-                progress_callback("正在验证激活状态...")
+                logging.info(f"获取到设备UUID: {device_uuid}")
 
-            is_sim = target.is_simulation if hasattr(target, 'is_simulation') else False
-            if is_sim:
+                # 步骤3: 使用激活盒子签名
+                if progress_callback:
+                    progress_callback("正在使用激活盒子签名...")
+
+                sign_result = cube.sign_uuid(device_uuid)
+                if not sign_result.success:
+                    error_msg = f"激活盒子签名失败: {sign_result.error_message}"
+                    logging.error(error_msg)
+                    # 记录失败日志
+                    self._log_auth_result(log_mgr, False, device_serial, device_uuid, "", cube_id, error_msg, cube)
+                    return {
+                        'success': False,
+                        'message': error_msg,
+                        'details': sign_result.raw_output
+                    }
+
+                signature = (sign_result.result_data or "").strip()
+                if not signature:
+                    error_msg = "签名结果为空"
+                    logging.error(error_msg)
+                    self._log_auth_result(log_mgr, False, device_serial, device_uuid, "", cube_id, error_msg, cube)
+                    return {
+                        'success': False,
+                        'message': error_msg,
+                        'details': sign_result.raw_output
+                    }
+
+                logging.info(f"获取到签名: {signature}")
+
+                # 步骤4: 记录到 all/ (签名成功后先记录)
+                self._log_auth_result(log_mgr, True, device_serial, device_uuid, signature, cube_id, "", cube)
+
+                # 步骤5: double check 状态
+                if progress_callback:
+                    progress_callback("正在二次确认设备状态...")
+                double_check_status = self.device_monitor.get_device_auth_status(device_serial)
+                if double_check_status.strip().lower() != "unauthorized":
+                    error_msg = f"设备状态已变化: {double_check_status}"
+                    self._log_auth_result(log_mgr, False, device_serial, device_uuid, signature, cube_id, error_msg, cube)
+                    return {
+                        'success': False,
+                        'message': error_msg,
+                        'details': ''
+                    }
+
+                # 步骤6: 激活设备
+                if progress_callback:
+                    progress_callback("正在激活设备...")
+
+                activate_result = target.activate(signature)
+                if not activate_result.success:
+                    error_msg = f"设备激活失败: {activate_result.error_message}"
+                    logging.error(error_msg)
+                    self._log_auth_result(log_mgr, False, device_serial, device_uuid, signature, cube_id, error_msg, cube)
+                    return {
+                        'success': False,
+                        'message': error_msg,
+                        'details': activate_result.raw_output
+                    }
+
+                logging.info(f"设备激活成功: {device_serial}")
+                try:
+                    self.device_monitor.refresh_all_cube()
+                except Exception as refresh_error:
+                    logging.warning(f"激活后刷新Cube失败: {refresh_error}")
+
                 success_msg = f"设备激活成功: {device_serial}"
+                is_sim = target.is_simulation if hasattr(target, 'is_simulation') else False
                 return {
                     'success': True,
                     'message': success_msg,
-                    'details': f"UUID: {device_uuid}\n签名: {signature}\n状态: 已激活(模拟设备)"
+                    'details': f"UUID: {device_uuid}\n签名: {signature}\n状态: 已激活{' (模拟设备)' if is_sim else ''}"
                 }
 
-            state_result = self.adb_manager.get_device_state(device_serial)
-            if state_result.success and state_result.result_data == "Authorized":
-                success_msg = f"设备激活成功: {device_serial}"
-                logging.info(success_msg)
-                return {
-                    'success': True,
-                    'message': success_msg,
-                    'details': f"UUID: {device_uuid}\n签名: {signature}\n状态: 已激活"
-                }
-            else:
-                error_msg = f"设备激活可能失败，状态验证异常: {state_result.error_message}"
-                logging.warning(error_msg)
-                return {
-                    'success': False,
-                    'message': error_msg,
-                    'details': state_result.raw_output
-                }
+            finally:
+                # 确保一定unlock
+                target.unlock()
 
         except Exception as e:
             error_msg = f"激活过程发生异常: {str(e)}"
             logging.error(error_msg)
+            if cube is not None:
+                self._log_auth_result(log_mgr, False, device_serial, device_uuid, signature, cube_id, error_msg, cube)
+            # 确保异常时也unlock
+            if target is not None:
+                try:
+                    target.unlock()
+                except Exception:
+                    pass
             return {
                 'success': False,
                 'message': error_msg,
                 'details': str(e)
             }
+
+    @staticmethod
+    def _log_auth_result(log_mgr, success: bool, device_serial: str, uuid: str,
+                         signature: str, cube_id: str, error_reason: str, cube: ICube) -> None:
+        """记录授权结果到日志"""
+        if log_mgr is None:
+            return
+        try:
+            if not success and error_reason:
+                cube_info = cube.to_authenticator_info()
+                cube_status = str(cube_info.device_status)
+                cube_expire = str(cube_info.expired_date or "")
+                log_mgr.log_authorization_failure(
+                    device_serial=device_serial, uuid=uuid, signature=signature,
+                    cube_id=cube_id, error_reason=error_reason,
+                    cube_status=cube_status, cube_expire=cube_expire,
+                )
+            else:
+                log_mgr.log_authorization(
+                    success=success, device_serial=device_serial, uuid=uuid,
+                    signature=signature, cube_id=cube_id, error_reason=error_reason,
+                )
+        except Exception:
+            pass
 
     def _resolve_target_device(self, serial: str) -> Optional[ITargetDevice]:
         """根据serial解析ITargetDevice（委托device_monitor统一处理）"""

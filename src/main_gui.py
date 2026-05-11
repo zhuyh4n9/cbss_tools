@@ -121,6 +121,7 @@ class AuthenticatorToolGUI:
 
             # 激活管理器
             self.auth_manager = AuthenticationManager(self.adb_manager, self.device_monitor)
+            self.auth_manager._log_manager = self.log_manager  # 注入日志管理器
 
             logging.info("所有管理器初始化完成")
 
@@ -756,14 +757,19 @@ class AuthenticatorToolGUI:
                 uuid_display = uuid_text if uuid_text else "获取中..."
 
             if auto_enabled:
-                if self.auth_manager.is_device_auto_activation_completed(device.serial):
+                if status_lower == "authorizationfailure":
+                    heading = self.prompt_mgr.get('DeviceTable.action_auth_failure')
+                elif self.auth_manager.is_device_auto_activation_completed(device.serial):
                     heading = auto_done_text
                 elif status_lower == "unauthorized" and self._is_uuid_ready(uuid_display) and self.auth_manager.is_device_queued_for_auto_activation(device.serial):
                     heading = auto_waiting_text
                 else:
                     heading = manual_unavailable_text
             else:
-                heading = manual_available_text if (status_lower == "unauthorized" and self._is_uuid_ready(uuid_display)) else manual_unavailable_text
+                if status_lower == "authorizationfailure":
+                    heading = self.prompt_mgr.get('DeviceTable.action_auth_failure')
+                else:
+                    heading = manual_available_text if (status_lower == "unauthorized" and self._is_uuid_ready(uuid_display)) else manual_unavailable_text
             rows.append((
                 "serial:" + str(device.serial),
                 uuid_display,
@@ -1463,34 +1469,57 @@ class AuthenticatorToolGUI:
 
         dialog = tk.Toplevel(self.root)
         dialog.title(self.prompt_mgr.get('Dialogs.add_simulated_device_title'))
-        dialog.geometry("380x180")
+        dialog.geometry("420x360")
         dialog.transient(self.root)
         dialog.grab_set()
 
-        ttk.Label(dialog, text=self.prompt_mgr.get('Dialogs.simulated_device_status_label'), font=('Arial', 10)).pack(pady=(20, 10))
+        fields = ttk.Frame(dialog, padding=12)
+        fields.pack(fill=tk.BOTH, expand=True)
 
+        # 状态（必填）
+        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.simulated_device_status_label'), font=('Arial', 10)).grid(row=0, column=0, sticky='w', pady=4)
         status_var = tk.StringVar(value="Unauthorized")
         status_combo = ttk.Combobox(
-            dialog,
-            textvariable=status_var,
+            fields, textvariable=status_var,
             values=list(SIMULATED_DEVICE_STATUS_OPTIONS),
-            state="readonly",
-            width=30
+            state="readonly", width=35
         )
-        status_combo.pack(pady=5)
+        status_combo.grid(row=0, column=1, sticky='we', pady=4)
+
+        # UUID（可选）
+        ttk.Label(fields, text="UUID (可选):").grid(row=1, column=0, sticky='w', pady=4)
+        uuid_var = tk.StringVar()
+        ttk.Entry(fields, textvariable=uuid_var, width=38).grid(row=1, column=1, sticky='we', pady=4)
+
+        # Serial ID（可选）
+        ttk.Label(fields, text="Serial ID (可选):").grid(row=2, column=0, sticky='w', pady=4)
+        serial_var = tk.StringVar()
+        ttk.Entry(fields, textvariable=serial_var, width=38).grid(row=2, column=1, sticky='we', pady=4)
+
+        # 模拟激活失败
+        failure_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(fields, text="Simulation activate Failure", variable=failure_var).grid(row=3, column=0, columnspan=2, sticky='w', pady=8)
+        fields.columnconfigure(1, weight=1)
 
         def on_confirm():
             try:
                 status = status_var.get().strip()
-                self.device_monitor.add_simulated_device(status)
+                self.device_monitor.add_simulated_device(
+                    status=status,
+                    uuid=uuid_var.get().strip(),
+                    serial_number=serial_var.get().strip(),
+                    simulate_activate_failure=failure_var.get(),
+                )
                 self.update_device_display(self.device_monitor.target_devices)
                 self.status_var.set(self.prompt_mgr.format('InfoMessages.simulated_device_added', status=status))
                 dialog.destroy()
             except Exception as e:
                 messagebox.showerror(self.prompt_mgr.get('Common.error_title'), self.prompt_mgr.format('Errors.unknown_error', msg=str(e)))
 
-        ttk.Button(dialog, text=self.prompt_mgr.get('Buttons.ok'), command=on_confirm).pack(pady=(15, 5))
-        ttk.Button(dialog, text=self.prompt_mgr.get('Buttons.cancel'), command=dialog.destroy).pack(pady=5)
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill=tk.X, pady=(10, 10))
+        ttk.Button(btn_frame, text=self.prompt_mgr.get('Buttons.ok'), command=on_confirm).pack(side=tk.RIGHT, padx=8)
+        ttk.Button(btn_frame, text=self.prompt_mgr.get('Buttons.cancel'), command=dialog.destroy).pack(side=tk.RIGHT)
 
     def show_create_simulated_cube_dialog(self):
         dialog = tk.Toplevel(self.root)
@@ -1740,7 +1769,20 @@ class AuthenticatorToolGUI:
             self.status_var.set(self.prompt_mgr.get('Text.activation_fail'))
             messagebox.showerror(self.prompt_mgr.get('Common.fail_title'), result['message'])
 
-        # 激活完成后：立即更新UI状态 + 通知parser异步重新获取（不产生重复入队）
+        # 记录授权详情
+        details = result.get('details', '')
+        uuid_match = details.split('UUID: ')[-1].split('\n')[0] if 'UUID: ' in details else ''
+        sig_match = details.split('签名: ')[-1].split('\n')[0] if '签名: ' in details else ''
+        self.log_manager.log_authorization(
+            success=bool(result.get('success')),
+            device_serial=str(device_serial or ''),
+            uuid=uuid_match,
+            signature=sig_match,
+            cube_id=str(self.auth_selector.get() or ''),
+            error_reason=result.get('message', '') if not result.get('success') else '',
+        )
+
+        # 激活完成后：立即更新UI状态 + 通知parser异步重新获取
         if device_serial:
             if result.get('success'):
                 self.device_monitor.update_device_status(device_serial, "Authorized")

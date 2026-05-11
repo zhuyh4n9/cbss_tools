@@ -67,16 +67,18 @@ class SimulatorDeviceDetector(IDeviceDetector):
         with self._lock:
             return [d.to_device_info() for d in self._devices.values()]
 
-    def add_device(self, status: str) -> DeviceInfo:
+    def add_device(self, status: str, uuid: str = "", serial_number: str = "",
+                   simulate_activate_failure: bool = False) -> DeviceInfo:
         """创建并添加一个模拟设备"""
         normalized_status = _normalize_sim_status(status)
         with self._lock:
             self._counter += 1
-            serial = f"SIM-{self._counter:04d}"
+            serial = serial_number.strip() if serial_number.strip() else f"SIM-{self._counter:04d}"
             device = ITargetDevice.CreateSimulation(
                 status=normalized_status,
                 serial_number=serial,
-                uuid=secrets.token_hex(32),
+                uuid=uuid.strip() if uuid.strip() else None,
+                simulate_activate_failure=simulate_activate_failure,
             )
             if not isinstance(device, SimulatorDevice):
                 raise RuntimeError("模拟设备创建失败")

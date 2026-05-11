@@ -1,21 +1,62 @@
 # cbss_tools 维护 Skill
 
 ## 目标
-用于指导维护 `cbss_tools/cbss_host_tool` 相关 PC 端代码（The Cube）时的分析与改动路径，确保新增能力可落在现有架构中。
+用于指导维护 `cbss_tools` / `cbss_host_tool` 相关 PC 端代码（The Cube）时的分析与改动路径，确保新增能力可落在现有架构中。本文档同时是全量功能清单，便于快速定位。
 
-## 一、先理解的数据流（必须）
-1. 设备发现：`DeviceMonitor` 轮询 `adb devices -l`。
-2. 设备分类：`DeviceParser` 将序列号分流为 authenticator / target，维护 `await/ready` 队列。
-3. 认证器快照：`CubeManager` 周期刷新 `snapshot`，并通过回调更新 UI。
-4. 授权流程：`AuthenticationManager._perform_authentication()` 执行
-   `acquire_secure_uuid -> sign -> activate_device2 -> state校验`。
+---
 
-关键文件：
-- `src/device_monitor.py`
-- `src/device_parser.py`
-- `src/cube_manager.py`
-- `src/auth_manager.py`
-- `src/main_gui.py`
+## 一、全量架构（v3.2.0）
+
+### 数据流
+1. **设备探测**：`DeviceMonitor` 通过 `IDeviceDetector` 列表轮询：
+   - `AdbDeviceDetector` — ADB 设备
+   - `SimulatorDeviceDetector` — 模拟设备
+2. **设备分类**：`DeviceParser` 将 ADB 序列号分流为 authenticator / target，维护 `await/ready` 队列。
+   - 分类完成后自动 `markDirty`，kick parser 执行 `refreshDeviceMeta` 获取元信息
+3. **认证器快照**：`CubeManager` 周期刷新 `snapshot`，并通过回调更新 UI。
+4. **授权流程**：`AuthenticationManager._perform_authentication()` 执行：
+   `lock → check state → sign_uuid → log(all/) → double check → activate → log(failure/) → unlock`
+   - sign_uuid 前必须先确认 device 状态为 Unauthorized，避免消耗 Cube 授权数
+   - activate 失败标记 `AuthorizationFailure` 状态，禁止再次授权
+   - 失败记录写入 `detailed_info/failure/`，含 Cube status/expire
+
+### 关键文件
+- `src/device_source.py` — `IDeviceDetector` 抽象 + `AdbDeviceDetector` + `SimulatorDeviceDetector`
+- `src/device_monitor.py` — 设备监控，统一管理所有探测器
+- `src/device_parser.py` — 设备分类 + dirty 设备 kick 刷新
+- `src/device_classification_strategy.py` — 分类策略，分类后 markDirty
+- `src/target_device.py` — `ITargetDevice` 接口 + dirty/lock 状态管理
+- `src/cube_manager.py` — Cube 快照管理
+- `src/auth_manager.py` — 授权流程编排
+- `src/main_gui.py` — Tkinter 主窗口
+
+### ITargetDevice 核心接口
+| 方法 | 说明 |
+|---|---|
+| `refreshDeviceMeta()` | 获取设备元信息（仅 DeviceParser 调用） |
+| `markDirty(kick)` | 标记状态不可信，kick parser 刷新；lock 状态下延迟 |
+| `lock()` / `unlock(kick)` | 锁定/解锁；unlock 时检查 pending dirty 并重新标记 |
+| `activate(signature)` | lock→activate（失败标记AuthorizationFailure）→markDirty→unlock |
+| `isDirty()` / `isLocked()` | 状态查询 |
+
+### 设备状态
+- `Authorized` / `Unauthorized` / `Pirated` / `Unknown` / **`AuthorizationFailure`**
+- `AuthorizationFailure`：activate 失败后标记，禁止再次激活。UI 显示"未预期失败, 请报告Bug"
+- 设备重新插拔后可通过 `refreshDeviceMeta` 清除该状态
+
+### DeviceParser kick 操作
+- `kick()` 遍历 ready/await 队列中所有 dirty 设备，调用 `refreshDeviceMeta`
+- `markDirty` 通过 `parser_kick` 回调触发
+
+### 日志增强
+- `logs/detailed_info/all/authorization_xxxxxx.json` — 所有授权记录
+  - 字段：success, timestamp, serial_id, uuid, signature, cube_id, error_reason
+- `logs/detailed_info/failure/authorization_xxxxxx.json` — 失败记录
+  - 额外字段：cube_status, cube_expire
+- 目录路径可通过 `[Logging] auth_log_all_dir` / `auth_log_failure_dir` 配置
+- 每文件 200 条，自动轮转
+
+---
 
 ## 二、cbss_tools 相关改动的标准落点
 凡是新增/修改设备能力，按以下顺序改：

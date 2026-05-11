@@ -1,5 +1,28 @@
 # CBSS工具更新日志
 
+## v3.2.0 (2026-05-11)
+
+### 逻辑优化
+1. **TargetDevice 增加 dirty/lock 状态管理**
+   - `ITargetDevice` 增加 `refreshDeviceMeta`、`markDirty`、`lock`、`unlock`、`isDirty`、`isLocked` 接口
+   - `markDirty` 标记设备状态不可信，kick `DeviceParser` 重新获取元信息（UUID/status/port）
+   - `lock`/`unlock` 保护关键操作（如 `activate`），lock 状态下 `markDirty` 延迟到 unlock 执行
+   - `activate` 内部自动执行 lock→activate→markDirty→unlock 流程
+2. **DeviceParser 增加 kick 操作**
+   - `kick()` 遍历所有 dirty 设备，调用 `refreshDeviceMeta` 获取最新元信息
+   - 分类完成后自动 `markDirty` 触发初次刷新
+3. **认证流程统一**
+   - `_perform_authentication` 不再区分模拟/真实设备状态验证
+   - `activate` 内部自动触发 parser 刷新
+4. **DeviceMonitor 统一管理全部设备**
+   - ADB 设备与模拟设备通过统一的探测器列表管理
+   - 模拟设备不再单独合并到 `target_devices`
+
+### 日志增强
+- `logs/detailed_info/all/` 目录记录授权详情
+- 每条记录包含：成功/失败、时间、serial_id、uuid、signature、Cube Id、错误原因
+- 每个文件限制 200 条记录，自动轮转
+
 ## v3.1.4 (2026-05-09)
 
 ### 问题修复
