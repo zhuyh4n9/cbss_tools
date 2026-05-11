@@ -185,6 +185,7 @@ class AuthenticatorToolGUI:
             variable=self.auto_activation_menu_var,
             command=self.toggle_auto_activation
         )
+        tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.clear_logs'), command=self.clear_logs_from_tools_menu)
         tools_menu.add_separator()
         if self.auth_manager.is_simulated_device_enabled():
             tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.create_simulated_cube'), command=self.show_create_simulated_cube_dialog)
@@ -917,6 +918,28 @@ class AuthenticatorToolGUI:
     def view_logs(self):
         """查看日志"""
         dialog = LogViewDialog(self.root, self.log_manager, self.prompt_mgr)
+
+    def clear_logs_from_tools_menu(self):
+        """从工具菜单清空日志"""
+        if not messagebox.askyesno(
+            self.prompt_mgr.get('Common.confirm_title'),
+            self.prompt_mgr.get('Text.confirm_clear_log')
+        ):
+            return
+
+        action_name = self.prompt_mgr.get('MenuItems.clear_logs')
+        if self.log_manager.clear_logs():
+            self.status_var.set(self.prompt_mgr.get('Text.log_cleared'))
+            messagebox.showinfo(
+                self.prompt_mgr.get('Common.success_title'),
+                self.prompt_mgr.format('InfoMessages.operation_success', name=action_name)
+            )
+            return
+
+        messagebox.showerror(
+            self.prompt_mgr.get('Common.fail_title'),
+            self.prompt_mgr.format('InfoMessages.operation_fail', name=action_name)
+        )
 
     def show_help(self):
         """显示帮助信息"""

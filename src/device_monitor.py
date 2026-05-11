@@ -135,10 +135,13 @@ class DeviceMonitor:
         """更新设备信息"""
         try:
             logging.debug("正在更新设备信息...")
+            previous_serials = set(self._connected_index.keys())
             devices = []
             for source_name, source in self._device_sources.items():
                 try:
                     source_devices = source.poll_devices() or []
+                    if source_devices:
+                        logging.info(f"设备探测来源[{source_name}]发现设备: {len(source_devices)}")
                     for device in source_devices:
                         if not device.detection_method:
                             device.detection_method = source_name
@@ -147,6 +150,16 @@ class DeviceMonitor:
                     logging.error(f"设备来源 {source_name} 轮询失败: {source_error}")
             # 设备监控仅负责插拔同步，设备类型辨别与目标设备解析由device_parser负责
             new_connected_index = {d.serial: d for d in devices}
+            current_serials = set(new_connected_index.keys())
+            added = sorted(current_serials - previous_serials)
+            removed = sorted(previous_serials - current_serials)
+            if added or removed:
+                logging.info(
+                    "设备连接变化: 新增=%s, 移除=%s, 当前总数=%d",
+                    added or "[]",
+                    removed or "[]",
+                    len(current_serials),
+                )
             self._connected_index = new_connected_index
             self.device_parser.sync_connected_devices(list(new_connected_index.values()))
 
