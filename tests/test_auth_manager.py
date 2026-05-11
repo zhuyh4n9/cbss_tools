@@ -223,6 +223,7 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
             result = manager._perform_authentication(simulated.serial, "CUBE-001")
 
             self.assertTrue(result["success"])
+            self.assertIn("authenticator_sign", events)
             self.assertNotIn("get_device_uuid", events)
             self.assertNotIn("verify_device_state", events)
             self.assertEqual(manager.get_simulated_devices()[0].status, "Authorized")

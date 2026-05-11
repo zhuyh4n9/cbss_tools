@@ -38,6 +38,8 @@ class AdbDeviceSource(DeviceSource):
 
 
 class SimulationDeviceSource(DeviceSource):
+    """DeviceSource that polls simulated target devices from a callback provider."""
+
     def __init__(self, provider: Callable[[], List[DeviceInfo]]):
         self._provider = provider
 

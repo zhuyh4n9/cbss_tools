@@ -272,6 +272,7 @@ class AuthenticationManager:
         return device.to_device_info()
 
     def _resolve_target_device(self, device_serial: str) -> ITargetDevice:
+        """Resolve target device instance by serial for unified authentication flow."""
         serial = str(device_serial or "").strip()
         with self._simulated_lock:
             simulated = self._simulated_devices.get(serial)
@@ -413,6 +414,14 @@ class AuthenticationManager:
 
             device_uuid = target_device.getUuid()
             if not device_uuid:
+                if target_device.getDetectionMethod().strip().lower() != "adb":
+                    error_msg = "设备UUID为空"
+                    logging.error(error_msg)
+                    return {
+                        'success': False,
+                        'message': error_msg,
+                        'details': ''
+                    }
                 uuid_result = self.adb_manager.get_device_uuid(device_serial)
                 if not uuid_result.success:
                     error_msg = f"获取设备UUID失败: {uuid_result.error_message}"
