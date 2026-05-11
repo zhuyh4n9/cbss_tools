@@ -123,7 +123,7 @@ class TestMainGuiDeviceAction(unittest.TestCase):
             module_globals = runpy.run_path(str(main_gui_path), run_name="__test__")
         cls.gui_class = module_globals["AuthenticatorToolGUI"]
 
-    def test_auto_mode_unqueued_unauthorized_device_shows_bug_hint(self):
+    def test_auto_mode_unqueued_unauthorized_device_shows_waiting_hint(self):
         gui = self.gui_class.__new__(self.gui_class)
         gui.prompt_mgr = _FakePromptManager()
         gui.auth_manager = _FakeAuthManager(queued=False, completed=False)
@@ -135,7 +135,7 @@ class TestMainGuiDeviceAction(unittest.TestCase):
             auto_enabled=True,
         )
 
-        self.assertEqual(heading, "工具异常 -- 请提交Bug")
+        self.assertEqual(heading, "等待自动授权")
 
     def test_blocked_device_shows_bug_hint_even_in_manual_mode(self):
         gui = self.gui_class.__new__(self.gui_class)

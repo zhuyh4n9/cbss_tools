@@ -759,7 +759,7 @@ class AuthenticatorToolGUI:
             if status_lower == "unauthorized" and uuid_ready:
                 if self.auth_manager.is_device_queued_for_auto_activation(serial):
                     return auto_waiting_text
-                return auto_anomaly_text
+                return auto_waiting_text
             return manual_unavailable_text
 
         if status_lower == "unauthorized" and uuid_ready:
