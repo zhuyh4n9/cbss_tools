@@ -226,7 +226,10 @@ class IAdbDevice(TargetDeviceAbstract, ABC):
 
 class AC8267Device(IAdbDevice):
     def refreshDeviceMeta(self) -> None:
-        """通过ADB获取设备元信息"""
+        """通过ADB获取设备元信息。AuthorizationFailure状态跳过（避免被覆盖为Unauthorized）"""
+        if self.getStatus().lower() == "authorizationfailure":
+            self._dirty = False
+            return
         uuid_result = self.adb_manager.get_device_uuid(self.getSerialNumber())
         state_result = self.adb_manager.get_device_state(self.getSerialNumber())
         if uuid_result.success and uuid_result.result_data:

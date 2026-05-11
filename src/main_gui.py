@@ -331,6 +331,7 @@ class AuthenticatorToolGUI:
         device_scrollbar_v.pack(side=tk.RIGHT, fill=tk.Y)
         device_scrollbar_h.pack(side=tk.BOTTOM, fill=tk.X)
         self.device_tree.bind('<Double-1>', self.on_device_double_click)
+        self.device_tree.bind('<Button-3>', self._on_device_right_click)  # 右键菜单
         self._update_auto_auth_ui_state()
 
     def create_status_bar(self):
@@ -1461,6 +1462,37 @@ class AuthenticatorToolGUI:
         value = (uuid_text or "").strip()
         return value not in ("", "-", "获取中...", "Checking...")
 
+    def _on_device_right_click(self, event):
+        """右键菜单：移除模拟设备"""
+        selection = self.device_tree.selection()
+        if not selection:
+            return
+        item = self.device_tree.item(selection[0])
+        device_serial = item['values'][0].split('serial:')[-1] if 'serial:' in str(item['values'][0]) else str(item['values'][0])
+        # 仅模拟设备支持右键移除
+        if not device_serial.startswith('SIM-'):
+            return
+
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="移除模拟设备", command=lambda: self._remove_simulated_device(device_serial))
+        menu.post(event.x_root, event.y_root)
+
+    def _remove_simulated_device(self, serial: str):
+        """移除模拟设备（模拟设备重新插拔）"""
+        if not messagebox.askyesno("确认", f"确认移除模拟设备 {serial}？\n重新添加后状态将刷新。"):
+            return
+        # 通过detector上报移除事件
+        sim_det = self.device_monitor._find_detector("Simulator")
+        if sim_det is not None:
+            sim_det.remove_device(str(serial))
+        # 从_connected_index和target_devices移除
+        self.device_monitor._connected_index.pop(str(serial), None)
+        self.device_monitor.target_devices = [
+            d for d in self.device_monitor.target_devices if d.serial != serial
+        ]
+        self.update_device_display(self.device_monitor.target_devices)
+        self.status_var.set(f"模拟设备已移除: {serial}")
+
     def show_add_simulated_device_dialog(self):
         """显示添加模拟设备弹窗"""
         if not ENABLE_SIMULATED_DEVICE:
@@ -1782,11 +1814,11 @@ class AuthenticatorToolGUI:
             error_reason=result.get('message', '') if not result.get('success') else '',
         )
 
-        # 激活完成后：立即更新UI状态 + 通知parser异步重新获取
+        # 激活完成后：立即更新UI状态 + markDirty刷新
         if device_serial:
             if result.get('success'):
                 self.device_monitor.update_device_status(device_serial, "Authorized")
-            self.device_monitor.reparse_device(device_serial)
+            self.device_monitor.mark_device_dirty(device_serial)
             self.device_monitor.refresh_all_cube()
 
     def on_batch_authentication_complete(self, result: dict, progress_dialog):
@@ -1801,13 +1833,12 @@ class AuthenticatorToolGUI:
             self.status_var.set(self.prompt_mgr.get('Text.batch_activation_fail_status'))
             messagebox.showerror(self.prompt_mgr.get('Common.fail_title'), result['message'])
 
-        # 批量激活完成后：立即更新UI状态 + 通知parser异步重新获取
+        # 批量激活完成后：立即更新UI状态 + markDirty刷新
         for item in result.get('results', []):
             if item.get('success'):
                 self.device_monitor.update_device_status(item['device_serial'], "Authorized")
-                self.device_monitor.reparse_device(item['device_serial'])
-
-        self.device_monitor.refresh_all_device()
+                self.device_monitor.mark_device_dirty(item['device_serial'])
+        self.device_monitor.refresh_all_cube()
 
     def on_authentication_error(self, error_message: str, progress_dialog, device_serial: str = None):
         """激活错误处理"""
@@ -1818,10 +1849,10 @@ class AuthenticatorToolGUI:
 
         # 异常结束同样触发刷新
         if device_serial:
-            self.device_monitor.refresh_device(device_serial)
+            self.device_monitor.mark_device_dirty(device_serial)
             self.device_monitor.refresh_all_cube()
         else:
-            self.device_monitor.refresh_all_device()
+            self.device_monitor._mark_all_devices_dirty()
 
     # 诊断日志功能方法 (NEW in Update 2)
     def get_token_diagnostic(self):

@@ -10,7 +10,8 @@ from typing import List, Dict, Callable, Optional
 from datetime import datetime, timedelta
 from .adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
 from .device_parser import DeviceParser
-from .device_source import IDeviceDetector, AdbDeviceDetector, SimulatorDeviceDetector
+from .device_source import IDeviceDetector, AdbDeviceDetector, SimulatorDeviceDetector, DeviceChange
+from .target_device import SimulatorDevice, ITargetDevice, AC8267Device
 from .cube import SimulateCube, SimulateCubeConfig
 
 
@@ -25,10 +26,9 @@ class DeviceMonitor:
         self._connected_index: Dict[str, DeviceInfo] = {}
 
         # 统一探测器列表
-        self._sim_detector = SimulatorDeviceDetector()
         self._detectors: List[IDeviceDetector] = [
             AdbDeviceDetector(self.adb_manager),
-            self._sim_detector,
+            SimulatorDeviceDetector(),
         ]
 
         self.device_parser = DeviceParser(self.adb_manager)
@@ -78,22 +78,8 @@ class DeviceMonitor:
         logging.info("设备监控已停止")
 
     def _on_device_parser_update(self, devices: List[DeviceInfo]):
-        """接收parser的ADB设备结果，合并模拟设备后统一透传给UI"""
-        parser_serials = {d.serial for d in devices}
-        sim_devices = self._sim_detector.poll_devices()
-        merged = list(devices)
-        for sd in sim_devices:
-            if sd.serial not in parser_serials:
-                merged.append(sd)
-        # 同时更新模拟设备状态（激活后状态变化）
-        for sd in sim_devices:
-            for i, d in enumerate(merged):
-                if d.serial == sd.serial and d.serial in parser_serials:
-                    continue
-                if d.serial == sd.serial:
-                    merged[i] = sd
-                    break
-        self.target_devices = merged
+        """接收parser的设备结果，统一透传给UI"""
+        self.target_devices = list(devices)
         self._notify_callbacks('device_update', self.target_devices)
 
     def _on_authenticator_update(self, authenticators: Dict[str, AuthenticatorInfo]):
@@ -157,28 +143,44 @@ class DeviceMonitor:
                 time.sleep(self.refresh_interval)
     def update_devices(self):
         """手动更新设备信息"""
-        self._update_device_info()
+        pass
     def _update_device_info(self):
-        """更新设备信息：ADB设备送parser分类，模拟设备直接在device_monitor管理"""
+        """更新设备信息：Detector上报增删，仅将变化同步到parser"""
         try:
             logging.debug("正在更新设备信息...")
-            adb_devices = []
+            all_added = []
+            all_removed = []
             for detector in self._detectors:
                 name = detector.get_name()
                 try:
-                    source_devices = detector.poll_devices() or []
-                    if name == "Simulator":
-                        # 模拟设备不送parser，由device_monitor直接管理
-                        continue
-                    for device in source_devices:
-                        if not device.detection_method:
-                            device.detection_method = name
-                        adb_devices.append(device)
+                    change = detector.poll_changes()
                 except Exception as source_error:
-                    logging.error(f"探测器 {name} 轮询失败: {source_error}")
+                    logging.error(f"探测器 {name} poll_changes 失败: {source_error}")
+                    continue
 
-            self._connected_index = {d.serial: d for d in adb_devices}
-            self.device_parser.sync_connected_devices(list(self._connected_index.values()))
+                if not change.added and not change.removed:
+                    continue
+
+                if change.added:
+                    logging.info(f"探测器 {name}: +{len(change.added)} 设备: {[d.serial for d in change.added]}")
+                if change.removed:
+                    logging.info(f"探测器 {name}: -{len(change.removed)} 设备: {change.removed}")
+
+                for d in change.added:
+                    if not d.detection_method:
+                        d.detection_method = name
+                    self._connected_index[d.serial] = d
+                    all_added.append(d)
+                for serial in change.removed:
+                    self._connected_index.pop(serial, None)
+                    all_removed.append(serial)
+
+            # 仅将增删变化同步到parser
+            if all_added or all_removed:
+                self.device_parser.sync_connected_devices(
+                    added_devices=all_added,
+                    removed_serials=all_removed,
+                )
 
         except Exception as e:
             logging.error(f"更新设备信息失败: {e}")
@@ -284,26 +286,30 @@ class DeviceMonitor:
             return "unknown"
 
     def refresh_devices(self):
-        """手动刷新设备信息"""
+        """手动刷新全部设备（用户按钮触发）"""
         try:
-            self._update_device_info()
-            self.refresh_all_device()
+            for d in list(self.device_parser._ready_queue.values()):
+                d.markDirty()
+            self.device_parser.kick()
         except Exception as e:
             logging.error(f"手动刷新设备失败: {e}")
 
-    def refresh_device(self, serial: str):
-        """刷新单个设备解析状态：ready->await"""
-        self.device_parser.refresh_device(serial)
+    def mark_device_dirty(self, serial: str):
+        """标记单个设备dirty并kick parser刷新"""
+        target = self._get_target_from_parser(str(serial))
+        if target is not None:
+            target.markDirty(self.device_parser.kick)
 
     def reparse_device(self, serial: str):
         """激活后重新获取设备状态：保留当前状态进入await，解析器重新拉取后更新"""
         self.device_parser.reparse_device(serial)
 
     def update_device_status(self, serial: str, new_status: str):
-        """立即更新设备状态并通知UI（同时更新模拟设备探测器）"""
-        # 更新模拟设备探测器
-        self._sim_detector.update_device_status(serial, new_status)
-        # 更新target_devices
+        """立即更新设备状态并通知UI"""
+        # 同时更新parser中的TargetDeviceAbstract对象
+        target = self._get_target_from_parser(str(serial))
+        if target is not None:
+            target.setStatus(new_status)
         for device in self.target_devices:
             if device.serial == serial:
                 device.status = str(new_status or "")
@@ -335,20 +341,16 @@ class DeviceMonitor:
         return self.authenticators.get(serial)
 
     def get_target_device(self, serial: str):
-        """根据serial获取ITargetDevice（统一处理真实/模拟设备）"""
+        """根据serial获取ITargetDevice"""
         serial = str(serial or "").strip()
-        # 先查模拟设备
-        simulated = self._sim_detector.get_device(serial)
-        if simulated is not None:
-            return simulated
-        # 再查ADB设备
-        from .target_device import ITargetDevice, AC8267Device
+        target = self._get_target_from_parser(serial)
+        if target is not None:
+            return target
         target = ITargetDevice.CreateAdbDevice(serial, self.adb_manager)
         if isinstance(target, AC8267Device):
             return target
         if target is not None:
             return target
-        # 最后尝试
         return AC8267Device(
             serial_number=serial,
             adb_manager=self.adb_manager,
@@ -356,11 +358,18 @@ class DeviceMonitor:
             status="Unknown",
         )
 
+    def _get_target_from_parser(self, serial: str):
+        """从parser的ready/await队列中查找TargetDeviceAbstract"""
+        for d in list(self.device_parser._ready_queue.values()) + list(self.device_parser._await_queue.values()):
+            if d.getSerialNumber() == serial:
+                return d
+        return None
+
     def get_device_auth_status(self, serial: str) -> str:
         """获取设备认证状态（统一处理真实/模拟设备）"""
-        simulated = self._sim_detector.get_device(str(serial))
-        if simulated is not None:
-            return simulated.getStatus()
+        target = self._get_target_from_parser(str(serial))
+        if target is not None:
+            return target.getStatus()
         try:
             result = self.adb_manager.get_device_state(serial)
             if result.success:
@@ -369,23 +378,21 @@ class DeviceMonitor:
         except Exception:
             return "Error"
 
-    # ---- 模拟设备 / 模拟Cube API ----
-
-    @property
-    def sim_detector(self) -> SimulatorDeviceDetector:
-        return self._sim_detector
+    def _find_detector(self, name: str) -> Optional[IDeviceDetector]:
+        """按名称查找detector"""
+        for d in self._detectors:
+            if d.get_name() == name:
+                return d
+        return None
 
     def add_simulated_device(self, status: str, uuid: str = "", serial_number: str = "",
                              simulate_activate_failure: bool = False) -> DeviceInfo:
-        """创建模拟设备并立即加入target_devices"""
-        device_info = self._sim_detector.add_device(status, uuid=uuid, serial_number=serial_number,
-                                                     simulate_activate_failure=simulate_activate_failure)
-        # 立即加入target_devices并通知UI
-        self.target_devices.append(device_info)
-        self._notify_callbacks('device_update', self.target_devices)
-        # 通知unauthorized_ready回调（触发自动授权队列）
-        if (device_info.status or "").strip().lower() == "unauthorized" and device_info.uuid:
-            self._notify_callbacks('unauthorized_ready', device_info)
+        """创建模拟设备，由SimulatorDetector通过poll_changes上报"""
+        sim_det = self._find_detector("Simulator")
+        if sim_det is None:
+            raise RuntimeError("SimulatorDeviceDetector not found")
+        device_info = sim_det.add_device(status, uuid=uuid, serial_number=serial_number,
+                                          simulate_activate_failure=simulate_activate_failure)
         return device_info
 
     def is_simulated_cube(self, serial: str) -> bool:

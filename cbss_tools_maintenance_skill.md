@@ -5,20 +5,26 @@
 
 ---
 
-## 一、全量架构（v3.2.0）
+## 一、全量架构（v3.2.1）
 
 ### 数据流
 1. **设备探测**：`DeviceMonitor` 通过 `IDeviceDetector` 列表轮询：
-   - `AdbDeviceDetector` — ADB 设备
-   - `SimulatorDeviceDetector` — 模拟设备
-2. **设备分类**：`DeviceParser` 将 ADB 序列号分流为 authenticator / target，维护 `await/ready` 队列。
+   - `AdbDeviceDetector` — ADB 设备（对比上次 serial 列表，上报增删）
+   - `SimulatorDeviceDetector` — 模拟设备（用户操作触发 pending 增删事件）
+   - Detector 通过 `poll_changes()` 返回 `DeviceChange(added, removed)`，仅上报变化
+2. **设备管理**：`DeviceMonitor` 维护 `_connected_index` 统一记录所有探测器上报的设备
+   - 探测器上报增删 → 更新 `_connected_index` → 调用 `sync_connected_devices` 同步到 parser
+   - Sim 设备通过 parser 分类为 unknown，`_on_device_parser_update` 以 `SimulatorDeviceDetector.poll_devices()` 为准合并到 `target_devices`
+3. **设备分类**：`DeviceParser` 将序列号分流为 authenticator / target，维护 `await/ready` 队列。
    - 分类完成后自动 `markDirty`，kick parser 执行 `refreshDeviceMeta` 获取元信息
+   - `refreshDeviceMeta` 前后记录 INFO 日志（`开始/完成 [serial], status=..., uuid=...`）
 3. **认证器快照**：`CubeManager` 周期刷新 `snapshot`，并通过回调更新 UI。
 4. **授权流程**：`AuthenticationManager._perform_authentication()` 执行：
-   `lock → check state → sign_uuid → log(all/) → double check → activate → log(failure/) → unlock`
+   `check state → sign_uuid → log(all/) → double check → activate → log(failure/)`
    - sign_uuid 前必须先确认 device 状态为 Unauthorized，避免消耗 Cube 授权数
    - activate 失败标记 `AuthorizationFailure` 状态，禁止再次授权
    - 失败记录写入 `detailed_info/failure/`，含 Cube status/expire
+   - 设备加入自动授权队列时记录 INFO 日志
 
 ### 关键文件
 - `src/device_source.py` — `IDeviceDetector` 抽象 + `AdbDeviceDetector` + `SimulatorDeviceDetector`
@@ -42,7 +48,8 @@
 ### 设备状态
 - `Authorized` / `Unauthorized` / `Pirated` / `Unknown` / **`AuthorizationFailure`**
 - `AuthorizationFailure`：activate 失败后标记，禁止再次激活。UI 显示"未预期失败, 请报告Bug"
-- 设备重新插拔后可通过 `refreshDeviceMeta` 清除该状态
+- AuthorizationFailure 设备 `refreshDeviceMeta` 跳过 ADB 调用（避免状态被覆盖），仅清除 dirty
+- 模拟设备可通过右键"移除模拟设备"重新添加来刷新状态
 
 ### DeviceParser kick 操作
 - `kick()` 遍历 ready/await 队列中所有 dirty 设备，调用 `refreshDeviceMeta`

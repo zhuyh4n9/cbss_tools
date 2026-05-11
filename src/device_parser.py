@@ -64,19 +64,22 @@ class DeviceParser:
             if dev is None:
                 continue
             try:
+                logging.info(f"refreshDeviceMeta 开始 [{serial}]")
                 dev.refreshDeviceMeta()
+                logging.info(f"refreshDeviceMeta 完成 [{serial}], status={dev.getStatus()}, uuid={dev.getUuid()[:16] if dev.getUuid() else ''}...")
             except Exception as e:
                 logging.error(f"refreshDeviceMeta 失败 [{serial}]: {e}")
 
         if dirty_serials:
             self._notify_callbacks('device_update', self.get_devices())
-            # 刷新后检查是否有设备从dirty恢复，重新触发unauthorized_ready
             for serial in dirty_serials:
                 with self._lock:
                     dev = self._ready_queue.get(serial)
                 if dev is not None and not dev.isDirty():
                     if dev.getStatus().strip().lower() == "unauthorized" and dev.getUuid():
-                        self._notify_callbacks('unauthorized_ready', copy.deepcopy(dev.to_device_info()))
+                        if not getattr(dev, '_submitted', False):
+                            dev._submitted = True
+                            self._notify_callbacks('unauthorized_ready', copy.deepcopy(dev.to_device_info()))
 
     def start(self):
         if self._running:
@@ -129,6 +132,16 @@ class DeviceParser:
                 usb_port=usb_port,
                 status=device.status or "Unknown",
             )
+        if device.is_simulation:
+            from .target_device import ITargetDevice
+            from .device_source import SimulatorDeviceDetector
+            failure_flag = SimulatorDeviceDetector._sim_failure_flags.get(serial, False)
+            return ITargetDevice.CreateSimulation(
+                status=device.status or "Unauthorized",
+                serial_number=serial,
+                uuid=device.uuid,
+                simulate_activate_failure=failure_flag,
+            )
         return UnknownDevice(
             detection_method=detection_method,
             serial_number=serial,
@@ -167,17 +180,14 @@ class DeviceParser:
 
         self._wake_event.set()
 
-    def sync_connected_devices(self, devices: List[DeviceInfo]):
-        """同步当前连接设备：增删由device_monitor调用"""
-        incoming = {str(d.serial): self._to_target_device(copy.deepcopy(d)) for d in devices}
+    def sync_connected_devices(self, added_devices: List[DeviceInfo] = None,
+                               removed_serials: List[str] = None):
+        """同步设备增删：device_monitor直接告知新增和移除"""
+        added_devices = added_devices or []
+        removed_serials = removed_serials or []
+
         with self._lock:
-            current = set(self._base_devices.keys())
-            new = set(incoming.keys())
-
-            removed = current - new
-            added = new - current
-
-            for serial in removed:
+            for serial in removed_serials:
                 removed_info = self._base_devices.get(serial)
                 if removed_info:
                     try:
@@ -191,33 +201,22 @@ class DeviceParser:
                 self._order = [s for s in self._order if s != serial]
                 self.cube_manager.remove_cube(serial)
 
-            for serial in added:
+            for device in added_devices:
+                serial = str(device.serial)
+                target = self._to_target_device(copy.deepcopy(device))
                 try:
-                    self._log_device_event("added", incoming[serial].to_device_info())
+                    self._log_device_event("added", target.to_device_info())
                 except Exception as log_error:
                     logging.warning(f"记录新设备日志失败 [{serial}]: {log_error}")
-                self._base_devices[serial] = incoming[serial]
+                self._base_devices[serial] = target
                 if serial not in self._order:
                     self._order.append(serial)
-                if serial not in self._classify_queue:
+                if serial not in self._classify_queue and not self.cube_manager.has_cube(serial):
                     self._classify_queue.append(serial)
 
-            for serial in (new & current):
-                self._base_devices[serial] = incoming[serial]
-                if serial in self._await_queue:
-                    self._await_queue[serial].setConnectedUsbPort(incoming[serial].getConnectedUsbPort())
-                if serial in self._ready_queue:
-                    self._ready_queue[serial].setConnectedUsbPort(incoming[serial].getConnectedUsbPort())
-                    ready_info = self._ready_queue[serial].to_device_info()
-                    if ready_info.device_type == "unknown" and serial not in self._classify_queue:
-                        self._classify_queue.append(serial)
-
-            for serial in new:
-                if not self.cube_manager.has_cube(serial) and serial not in self._classify_queue:
-                    self._classify_queue.append(serial)
-
-        self._notify_callbacks('device_update', self.get_devices())
-        self._wake_event.set()
+        if added_devices or removed_serials:
+            self._notify_callbacks('device_update', self.get_devices())
+            self._wake_event.set()
 
     def remove_device(self, serial: str):
         """从await/ready队列移除设备（device_monitor调用）"""
@@ -276,16 +275,7 @@ class DeviceParser:
         self._wake_event.set()
 
     def refresh_all_cube(self):
-        """刷新全部authenticator：触发重新识别与状态校验"""
-        with self._lock:
-            for serial, dev in list(self._ready_queue.items()):
-                if dev.to_device_info().device_type in ("target_device", "unknown") and serial not in self._classify_queue:
-                    self._classify_queue.append(serial)
-
-            for serial in list(self._await_queue.keys()):
-                if serial not in self._classify_queue:
-                    self._classify_queue.append(serial)
-
+        """刷新全部Cube信息（不刷新target设备）"""
         self.cube_manager.refresh_all_cube()
         self._wake_event.set()
 
@@ -362,6 +352,9 @@ class DeviceParser:
                         self.cube_manager.add_cube(classify_serial)
 
                     self._notify_callbacks('device_update', self.get_devices())
+                    # 设备已在_ready_queue中，此时markDirty触发kick→refreshDeviceMeta→unauthorized_ready
+                    if decision.ready_device is not None:
+                        decision.ready_device.markDirty(self.kick)
                     continue
 
                 serial = self._next_await_serial()
@@ -391,7 +384,9 @@ class DeviceParser:
 
                 self._notify_callbacks('device_update', self.get_devices())
                 if ready_device.getStatus().strip().lower() == "unauthorized" and ready_device.getUuid():
-                    self._notify_callbacks('unauthorized_ready', copy.deepcopy(ready_device.to_device_info()))
+                    if not getattr(ready_device, '_submitted', False):
+                        ready_device._submitted = True
+                        self._notify_callbacks('unauthorized_ready', copy.deepcopy(ready_device.to_device_info()))
 
             except Exception as e:
                 logging.error(f"DeviceParser 解析异常: {e}")

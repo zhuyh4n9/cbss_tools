@@ -1,5 +1,36 @@
 # CBSS工具更新日志
 
+## v3.2.1 (2026-05-11)
+
+### 问题修复
+1. **修复 `_perform_authentication` sign_uuid 不执行的问题**
+   - 缩进错误导致 sign_uuid 及后续步骤在状态检查返回后无法执行
+2. **修复所有设备提示"已被锁定"的问题**
+   - 移除 `_perform_authentication` 外层 lock，activate 内部已处理 lock/unlock
+3. **activate 失败后 UI 状态更新**
+   - 激活失败时立即调用 `update_device_status` 同步 AuthorizationFailure 到 UI
+4. **AuthorizationFailure 设备防止状态刷新覆盖**
+   - `refreshDeviceMeta` 对 AuthorizationFailure 设备跳过 ADB 调用，仅清除 dirty
+5. **移除认证流程中模拟设备的特殊处理**
+   - `_perform_authentication` 不再区分模拟/真实设备的返回标签
+
+### 功能增强
+1. **模拟设备创建弹窗增强**
+   - 新增自定义 UUID、Serial ID 输入（可选）
+   - 新增 Simulation activate Failure 勾选框，模拟激活失败场景
+2. **模拟设备右键移除**
+   - 右键 SIM- 前缀设备可移除，模拟设备重新插拔
+3. **授权日志分离**
+   - 所有记录 → `detailed_info/all/`，失败记录 → `detailed_info/failure/`
+   - 失败记录额外包含 cube_status、cube_expire
+   - 日志目录可通过配置 `auth_log_all_dir` / `auth_log_failure_dir` 指定
+4. **授权流程优化**
+   - sign_uuid 前先确认设备状态为 Unauthorized，避免浪费 Cube 授权数
+   - double check 设备状态后再执行 activate
+   - AuthorizationFailure 状态禁止再次激活
+5. **DEBUG 日志增强**
+   - device_parser kick 时记录 refreshDeviceMeta 开始/完成的 INFO 日志
+
 ## v3.2.0 (2026-05-11)
 
 ### 逻辑优化

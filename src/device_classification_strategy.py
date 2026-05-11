@@ -27,8 +27,6 @@ class DeviceClassificationStrategy:
                 usb_port=base_device.getConnectedUsbPort(),
             )
             if isinstance(detected_device, AC8267Device):
-                # 分类完成后标记dirty，触发parser刷新元信息
-                detected_device.markDirty(parser_kick)
                 return ClassificationDecision(ready_device=detected_device)
 
             if isinstance(detected_device, UnknownAdbDevice):
@@ -36,6 +34,10 @@ class DeviceClassificationStrategy:
                 if snapshot.success:
                     return ClassificationDecision(ready_device=None, should_add_cube=True)
                 return ClassificationDecision(ready_device=None, should_add_cube=False, should_mark_unknown=True)
+
+        # 模拟设备直接保留
+        if base_device.is_simulation:
+            return ClassificationDecision(ready_device=base_device.clone())
 
         return ClassificationDecision(ready_device=UnknownDevice(
             detection_method=base_device.getDetectionMethod(),
