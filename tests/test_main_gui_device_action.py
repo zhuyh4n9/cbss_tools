@@ -14,10 +14,21 @@ class _FakePromptManager:
             "DeviceTable.action_waiting_auto": "等待自动授权",
             "DeviceTable.action_auto_completed": "自动授权已完成",
             "DeviceTable.action_auto_queue_anomaly": "工具异常 -- 请提交Bug",
+            "Common.confirm_title": "确认",
+            "Common.success_title": "成功",
+            "Common.fail_title": "失败",
+            "Text.confirm_clear_log": "确定要清空日志吗？",
+            "Text.log_cleared": "日志已清空",
+            "MenuItems.clear_logs": "清空日志",
+            "InfoMessages.operation_success": "{name}执行成功",
+            "InfoMessages.operation_fail": "{name}执行失败",
         }
 
     def get(self, key):
         return self._values[key]
+
+    def format(self, key, **kwargs):
+        return self._values[key].format(**kwargs)
 
 
 class _FakeAuthManager:
@@ -30,6 +41,22 @@ class _FakeAuthManager:
 
     def is_device_auto_activation_completed(self, _serial):
         return self._completed
+
+
+class _FakeStatusVar:
+    def __init__(self):
+        self.value = ""
+
+    def set(self, value):
+        self.value = value
+
+
+class _FakeLogManager:
+    def __init__(self, clear_result=True):
+        self._clear_result = clear_result
+
+    def clear_logs(self):
+        return self._clear_result
 
 
 class TestMainGuiDeviceAction(unittest.TestCase):
@@ -74,6 +101,36 @@ class TestMainGuiDeviceAction(unittest.TestCase):
         )
 
         self.assertEqual(heading, "工具异常 -- 请提交Bug")
+
+    def test_clear_logs_from_tools_menu_success(self):
+        gui = self.gui_class.__new__(self.gui_class)
+        gui.prompt_mgr = _FakePromptManager()
+        gui.log_manager = _FakeLogManager(clear_result=True)
+        gui.status_var = _FakeStatusVar()
+        messagebox_module = self.gui_class.clear_logs_from_tools_menu.__globals__["messagebox"]
+
+        with mock.patch.object(messagebox_module, "askyesno", return_value=True, create=True), \
+             mock.patch.object(messagebox_module, "showinfo", create=True) as mock_showinfo:
+            gui.clear_logs_from_tools_menu()
+
+        self.assertEqual(gui.status_var.value, "日志已清空")
+        mock_showinfo.assert_called_once()
+
+    def test_clear_logs_from_tools_menu_cancelled(self):
+        gui = self.gui_class.__new__(self.gui_class)
+        gui.prompt_mgr = _FakePromptManager()
+        gui.log_manager = _FakeLogManager(clear_result=True)
+        gui.status_var = _FakeStatusVar()
+        messagebox_module = self.gui_class.clear_logs_from_tools_menu.__globals__["messagebox"]
+
+        with mock.patch.object(messagebox_module, "askyesno", return_value=False, create=True), \
+             mock.patch.object(messagebox_module, "showinfo", create=True) as mock_showinfo, \
+             mock.patch.object(messagebox_module, "showerror", create=True) as mock_showerror:
+            gui.clear_logs_from_tools_menu()
+
+        self.assertEqual(gui.status_var.value, "")
+        mock_showinfo.assert_not_called()
+        mock_showerror.assert_not_called()
 
 
 if __name__ == "__main__":
