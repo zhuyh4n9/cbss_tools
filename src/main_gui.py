@@ -720,6 +720,27 @@ class AuthenticatorToolGUI:
             text_widget.insert('1.0', detailed_info)
             text_widget.config(state=tk.DISABLED)
 
+    def _resolve_device_action_heading(self, serial: str, status_lower: str, uuid_display: str, auto_enabled: bool) -> str:
+        manual_available_text = self.prompt_mgr.get('DeviceTable.action_manual_activate')
+        manual_unavailable_text = self.prompt_mgr.get('DeviceTable.action_unavailable')
+        auto_waiting_text = self.prompt_mgr.get('DeviceTable.action_waiting_auto')
+        auto_done_text = self.prompt_mgr.get('DeviceTable.action_auto_completed')
+        auto_anomaly_text = self.prompt_mgr.get('DeviceTable.action_auto_queue_anomaly')
+        uuid_ready = self._is_uuid_ready(uuid_display)
+
+        if auto_enabled:
+            if self.auth_manager.is_device_auto_activation_completed(serial):
+                return auto_done_text
+            if status_lower == "unauthorized" and uuid_ready:
+                if self.auth_manager.is_device_queued_for_auto_activation(serial):
+                    return auto_waiting_text
+                return auto_anomaly_text
+            return manual_unavailable_text
+
+        if status_lower == "unauthorized" and uuid_ready:
+            return manual_available_text
+        return manual_unavailable_text
+
     def update_device_display(self, devices: List[DeviceInfo]):
         """更新设备显示"""
         all_devices = list(devices or [])
@@ -729,10 +750,6 @@ class AuthenticatorToolGUI:
         logging.debug(f"Updating device display with {len(all_devices)} devices")
         show_na_devices = self.config_manager.getboolean('UI', 'show_na_devices', False)
         auto_enabled = self.auth_manager.is_auto_activation_enabled()
-        manual_available_text = self.prompt_mgr.get('DeviceTable.action_manual_activate')
-        manual_unavailable_text = self.prompt_mgr.get('DeviceTable.action_unavailable')
-        auto_waiting_text = self.prompt_mgr.get('DeviceTable.action_waiting_auto')
-        auto_done_text = self.prompt_mgr.get('DeviceTable.action_auto_completed')
         rows = []
         seen_serials = set()
         for device in all_devices:
@@ -755,15 +772,12 @@ class AuthenticatorToolGUI:
             else:
                 uuid_display = uuid_text if uuid_text else "获取中..."
 
-            if auto_enabled:
-                if self.auth_manager.is_device_auto_activation_completed(device.serial):
-                    heading = auto_done_text
-                elif status_lower == "unauthorized" and self._is_uuid_ready(uuid_display) and self.auth_manager.is_device_queued_for_auto_activation(device.serial):
-                    heading = auto_waiting_text
-                else:
-                    heading = manual_unavailable_text
-            else:
-                heading = manual_available_text if (status_lower == "unauthorized" and self._is_uuid_ready(uuid_display)) else manual_unavailable_text
+            heading = self._resolve_device_action_heading(
+                serial=str(device.serial),
+                status_lower=status_lower,
+                uuid_display=uuid_display,
+                auto_enabled=auto_enabled,
+            )
             rows.append((
                 "serial:" + str(device.serial),
                 uuid_display,
@@ -933,7 +947,7 @@ class AuthenticatorToolGUI:
     def show_about(self):
         """显示关于信息"""
         company = self.config_manager.get('About', 'company', 'Autochips Inc')
-        version = self.config_manager.get('General', 'version', '3.1.5')
+        version = self.config_manager.get('General', 'version', '3.1.6')
         description = self.config_manager.get('About', 'description', self.prompt_mgr.get('Dialogs.about_desc'))
 
         about_text = f"""
