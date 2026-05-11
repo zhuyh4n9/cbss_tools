@@ -138,6 +138,8 @@ class AuthenticationManager:
                 return
 
             with self._queue_lock:
+                if serial in self._auto_activation_completed_serials:
+                    return
                 if serial in self._queued_serials or serial in self._in_progress_serials:
                     return
                 self._auto_activation_completed_serials.discard(serial)
@@ -151,6 +153,10 @@ class AuthenticationManager:
     def _on_device_update(self, devices: List[DeviceInfo]):
         self._enqueue_unauthorized_devices_from_update(devices)
         current_serials = {str((d.serial if d else "") or "").strip() for d in (devices or [])}
+        with self._queue_lock:
+            self._auto_activation_completed_serials.intersection_update(current_serials)
+            self._queued_serials.intersection_update(current_serials)
+            self._in_progress_serials.intersection_update(current_serials)
         with self._blocked_lock:
             stale = [serial for serial in self._blocked_activation_devices.keys() if serial not in current_serials]
             for serial in stale:
@@ -244,6 +250,16 @@ class AuthenticationManager:
 
     def _is_device_still_unauthorized(self, serial: str) -> bool:
         try:
+            target_getter = getattr(self.device_monitor, "get_target_device", None)
+            if callable(target_getter):
+                target = target_getter(serial)
+                if target is not None:
+                    get_status = getattr(target, "getStatus", None)
+                    get_uuid = getattr(target, "getUuid", None)
+                    status = (get_status() if callable(get_status) else "") or ""
+                    uuid = (get_uuid() if callable(get_uuid) else "") or ""
+                    return status.strip().lower() == "unauthorized" and bool(str(uuid).strip())
+
             device = self.device_monitor.get_device_by_serial(serial)
             if not device:
                 return False

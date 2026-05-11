@@ -1,5 +1,19 @@
 # CBSS工具更新日志
 
+## v3.1.12 (2026-05-11)
+
+### 问题修复
+1. **修复自动授权对模拟设备的状态判定仍可能使用旧快照问题**
+   - 自动授权前置判定 `is_device_still_unauthorized` 改为优先读取 `get_target_device` 的实时状态（含 SimulatorDevice）
+   - 避免队列中重复 serial 在首轮成功后再次被当作 Unauthorized 执行授权
+
+2. **增加自动授权完成设备的重复入队保护**
+   - `unauthorized_ready` 入队前新增 completed 集合拦截
+   - 设备移除（插拔）时自动清理 completed/queued/in-progress 集合，允许重新插入后再次自动授权
+
+3. **新增模拟Cube + 模拟Device 回归测试**
+   - 覆盖重复排队场景，验证仅消耗一次模拟Cube Token（counter 仅减少 1）
+
 ## v3.1.11 (2026-05-11)
 
 ### 问题修复
