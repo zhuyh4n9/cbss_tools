@@ -517,7 +517,23 @@ class AuthenticationManager:
         with self._simulated_lock:
             return {serial: cube.to_authenticator_info() for serial, cube in self._simulated_cubes.items()}
 
-    def create_simulated_cube(self, expired_date: str, counter: int, private_key_path: str, cube_id: str, oem_id: str, persist_path: str) -> str:
+    def _allocate_simulated_cube_serial(self) -> str:
+        while True:
+            self._simulated_cube_counter += 1
+            serial = f"SIM-CUBE-{self._simulated_cube_counter:04d}"
+            if serial not in self._simulated_cubes:
+                return serial
+
+    def create_simulated_cube(
+        self,
+        expired_date: str,
+        counter: int,
+        private_key_path: str,
+        cube_id: str,
+        oem_id: str,
+        persist_path: str,
+        serial_id: str = "",
+    ) -> str:
         if not self.is_simulation_enabled():
             raise RuntimeError("模拟功能未启用")
         if not private_key_path or not os.path.exists(private_key_path):
@@ -525,8 +541,9 @@ class AuthenticationManager:
         if not persist_path:
             raise ValueError("持久化路径不能为空")
         with self._simulated_lock:
-            self._simulated_cube_counter += 1
-            serial = f"SIM-CUBE-{self._simulated_cube_counter:04d}"
+            serial = str(serial_id or "").strip() or self._allocate_simulated_cube_serial()
+            if serial in self._simulated_cubes:
+                raise ValueError(f"模拟Cube序列号已存在: {serial}")
             config_obj = SimulateCubeConfig(
                 serial=serial,
                 cube_id=str(cube_id or serial),
@@ -539,7 +556,7 @@ class AuthenticationManager:
             self._simulated_cubes[serial] = SimulateCube.create(config_obj)
         return serial
 
-    def load_simulated_cube(self, persist_path: str, private_key_path: str) -> str:
+    def load_simulated_cube(self, persist_path: str, private_key_path: str, serial_id: str = "") -> str:
         if not self.is_simulation_enabled():
             raise RuntimeError("模拟功能未启用")
         if not persist_path or not os.path.exists(persist_path):
@@ -547,9 +564,15 @@ class AuthenticationManager:
         if not private_key_path or not os.path.exists(private_key_path):
             raise ValueError("P256私钥路径无效")
         with self._simulated_lock:
-            self._simulated_cube_counter += 1
-            serial = f"SIM-CUBE-{self._simulated_cube_counter:04d}"
-            cube = SimulateCube.load(persist_path=persist_path, private_key_path=private_key_path, serial_override=serial)
+            serial_override = str(serial_id or "").strip()
+            cube = SimulateCube.load(
+                persist_path=persist_path,
+                private_key_path=private_key_path,
+                serial_override=serial_override,
+            )
+            serial = cube.get_serial()
+            if serial in self._simulated_cubes:
+                raise ValueError(f"模拟Cube序列号已存在: {serial}")
             self._simulated_cubes[serial] = cube
         return serial
 

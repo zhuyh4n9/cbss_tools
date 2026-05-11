@@ -46,10 +46,15 @@ class DeviceMonitor:
             'error': []
         }
 
+        self.enable_periodic_polling = self.config.getboolean('General', 'enable_periodic_polling', False)
         self.refresh_rate = self.config.getint('General', 'refresh_rate', 1)
         self.refresh_interval = 1.0 / max(self.refresh_rate, 1)
+        self.polling_interval = max(self.config.getfloat('General', 'polling_interval_seconds', self.refresh_interval), 0.1)
         self.cube_refresh_interval = max(self.config.getint('General', 'cube_refresh_interval', 5), 1)
         self._last_cube_refresh_time = 0.0
+        cube_manager = getattr(self.device_parser, "cube_manager", None)
+        if cube_manager and hasattr(cube_manager, "set_periodic_refresh_enabled"):
+            cube_manager.set_periodic_refresh_enabled(self.enable_periodic_polling)
 
     @staticmethod
     def _device_signature(device: DeviceInfo):
@@ -89,6 +94,15 @@ class DeviceMonitor:
             source.start()
         self.device_parser.start()
         self._running = True
+        try:
+            self._update_device_info()
+            self.refresh_all_cube()
+        except Exception as e:
+            logging.error(f"设备监控启动首次刷新失败: {e}")
+            self._notify_callbacks('error', str(e))
+        if not self.enable_periodic_polling:
+            logging.info("设备定时轮询已禁用，仅在必要时刷新设备信息")
+            return
         self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor_thread.start()
         logging.info("设备监控已启动")
@@ -245,11 +259,11 @@ class DeviceMonitor:
                     self.refresh_all_cube()
                     self._last_cube_refresh_time = now
 
-                time.sleep(self.refresh_interval)
+                time.sleep(self.polling_interval)
             except Exception as e:
                 logging.error(f"设备监控异常: {e}")
                 self._notify_callbacks('error', str(e))
-                time.sleep(self.refresh_interval)
+                time.sleep(self.polling_interval)
     def update_devices(self):
         """手动更新设备信息"""
         self._update_device_info()
@@ -409,6 +423,7 @@ class DeviceMonitor:
         """手动刷新设备信息"""
         try:
             self._update_device_info()
+            self.refresh_all_cube()
             self.refresh_all_device()
         except Exception as e:
             logging.error(f"手动刷新设备失败: {e}")
