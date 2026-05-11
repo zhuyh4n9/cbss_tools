@@ -138,7 +138,7 @@ class ConfigManager:
         self.config.set('General', 'enable_periodic_polling', 'false')
         self.config.set('General', 'polling_interval_seconds', '0.2')
         self.config.set('General', 'adb_path', 'adb/adb.exe')
-        self.config.set('General', 'version', '3.1.9')
+        self.config.set('General', 'version', '3.1.10')
         self.config.set('General', 'auto_activation_enabled', 'false')
 
         # UI配置

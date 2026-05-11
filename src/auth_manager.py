@@ -216,12 +216,12 @@ class AuthenticationManager:
     def _pick_authenticator(self) -> Optional[str]:
         ready_authenticators = []
         available_authenticators = []
+        simulated_infos = self.get_simulated_cube_infos()
         for serial in self.get_available_authenticators():
             available_authenticators.append(serial)
-            if self.is_simulated_cube(serial):
-                ready_authenticators.append(serial)
-                continue
             auth_info = self.device_monitor.get_authenticator_by_serial(serial)
+            if auth_info is None:
+                auth_info = simulated_infos.get(serial)
             time_status = self._normalize_status(getattr(auth_info, 'time_status', ''))
             if time_status == self._READY_TIME_STATUS:
                 ready_authenticators.append(serial)
@@ -466,27 +466,17 @@ class AuthenticationManager:
             if progress_callback:
                 progress_callback("正在获取设备UUID...")
 
-            device_uuid = target_device.getUuid()
-            if not device_uuid:
-                if target_device.getDetectionMethod().strip().lower() != "adb":
-                    error_msg = "设备UUID为空"
-                    logging.error(error_msg)
-                    return {
-                        'success': False,
-                        'message': error_msg,
-                        'details': ''
-                    }
-                uuid_result = self.adb_manager.get_device_uuid(device_serial)
-                if not uuid_result.success:
-                    error_msg = f"获取设备UUID失败: {uuid_result.error_message}"
-                    logging.error(error_msg)
-                    return {
-                        'success': False,
-                        'message': error_msg,
-                        'details': uuid_result.raw_output
-                    }
-                device_uuid = uuid_result.result_data
-                target_device.setUuid(device_uuid)
+            uuid_result = target_device.fetch_uuid()
+            if not uuid_result.success:
+                error_msg = f"获取设备UUID失败: {uuid_result.error_message}"
+                logging.error(error_msg)
+                return {
+                    'success': False,
+                    'message': error_msg,
+                    'details': uuid_result.raw_output
+                }
+            device_uuid = (uuid_result.result_data or "").strip()
+            target_device.setUuid(device_uuid)
             if not device_uuid:
                 error_msg = "设备UUID为空"
                 logging.error(error_msg)
@@ -557,15 +547,10 @@ class AuthenticationManager:
             if progress_callback:
                 progress_callback("正在验证激活状态...")
 
-            if target_device.getDetectionMethod().strip().lower() == "adb":
-                state_result = self.adb_manager.get_device_state(device_serial)
-                verify_success = state_result.success and state_result.result_data == "Authorized"
-                verify_error = state_result.error_message
-                verify_output = state_result.raw_output
-            else:
-                verify_success = (target_device.getStatus() or "").strip().lower() == "authorized"
-                verify_error = ""
-                verify_output = target_device.getStatus()
+            state_result = target_device.fetch_state()
+            verify_success = state_result.success and (state_result.result_data or "").strip() == "Authorized"
+            verify_error = state_result.error_message
+            verify_output = state_result.raw_output or state_result.result_data
 
             if verify_success:
                 success_msg = f"设备激活成功: {device_serial}"

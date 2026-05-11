@@ -115,10 +115,7 @@ class DeviceParser:
         )
 
     def _make_await_device(self, device: TargetDeviceAbstract) -> TargetDeviceAbstract:
-        d = copy.deepcopy(device)
-        d.setUuid("")
-        d.status = "Checking..."
-        return d
+        return device.to_await_device()
 
     def _make_unknown_device(self, device: TargetDeviceAbstract) -> TargetDeviceAbstract:
         detection_method = device.getDetectionMethod()

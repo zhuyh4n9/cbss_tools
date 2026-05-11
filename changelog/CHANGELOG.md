@@ -1,5 +1,19 @@
 # CBSS工具更新日志
 
+## v3.1.10 (2026-05-11)
+
+### 问题修复
+1. **修复 SimulatorDevice 自动授权失败问题**
+   - 统一授权主流程改为通过 `ITargetDevice` 接口获取 UUID 与状态，不再在 `AuthenticationManager` 内按设备来源分支
+   - 模拟设备与真实设备统一经过同一授权步骤（获取UUID → 签名 → 激活 → 状态校验）
+
+2. **修复 Simulator 设备解析刷新会重置状态的问题**
+   - `DeviceParser` 进入 await 阶段时改为调用设备对象自身的 `to_await_device()` 规则
+   - `SimulatorDevice` 保留内部状态与 UUID，不再被解析流程重置为 `Checking...`
+
+3. **补充回归测试**
+   - 新增/更新单元测试覆盖模拟设备 await 刷新状态保持与统一授权接口行为
+
 ## v3.1.9 (2026-05-11)
 
 ### 问题修复

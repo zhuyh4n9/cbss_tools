@@ -68,6 +68,28 @@ class TestTargetDeviceFactory(unittest.TestCase):
         self.assertEqual(activate_result.error_message, "SIMULATED_FAIL")
         self.assertEqual(sim.getStatus(), "Unauthorized")
 
+    def test_simulation_to_await_device_keeps_status_and_uuid(self):
+        sim = ITargetDevice.CreateSimulation(
+            status="Unauthorized",
+            serial_number="SIM-AWAIT-0001",
+            uuid="UUID-AWAIT-0001",
+        )
+        sim.activate("dummy")
+
+        await_device = sim.to_await_device()
+
+        self.assertEqual(await_device.getUuid(), "UUID-AWAIT-0001")
+        self.assertEqual(await_device.getStatus(), "Authorized")
+
+    def test_adb_to_await_device_resets_status_and_uuid(self):
+        fake_adb = _FakeAdbManager(uuid_success=True, state_success=True, uuid="uuid-2", state="Unauthorized")
+        device = ITargetDevice.CreateAdbDevice(serial_number="A3", adb_manager=fake_adb)
+
+        await_device = device.to_await_device()
+
+        self.assertEqual(await_device.getUuid(), "")
+        self.assertEqual(await_device.to_device_info().status, "Checking...")
+
     def test_create_adb_device_as_target(self):
         fake_adb = _FakeAdbManager(uuid_success=True, state_success=True, uuid="uuid-1", state="Unauthorized")
         device = ITargetDevice.CreateAdbDevice(serial_number="A1", adb_manager=fake_adb, usb_port="1-1")

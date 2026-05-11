@@ -80,6 +80,18 @@ class ITargetDevice(ABC):
         pass
 
     @abstractmethod
+    def fetch_uuid(self) -> CommandResult:
+        pass
+
+    @abstractmethod
+    def fetch_state(self) -> CommandResult:
+        pass
+
+    @abstractmethod
+    def to_await_device(self):
+        pass
+
+    @abstractmethod
     def getStatus(self) -> str:
         pass
 
@@ -158,6 +170,24 @@ class TargetDeviceAbstract(ITargetDevice, ABC):
             is_simulation=self.is_simulation,
         )
 
+    def fetch_uuid(self) -> CommandResult:
+        current_uuid = (self.getUuid() or "").strip()
+        if not current_uuid:
+            return CommandResult(success=False, status_code=1, error_message="设备UUID为空", raw_output="")
+        return CommandResult(success=True, status_code=0, result_data=current_uuid, raw_output=current_uuid)
+
+    def fetch_state(self) -> CommandResult:
+        state = (self.getStatus() or "").strip()
+        if not state:
+            return CommandResult(success=False, status_code=1, error_message="设备状态为空", raw_output="")
+        return CommandResult(success=True, status_code=0, result_data=state, raw_output=state)
+
+    def to_await_device(self):
+        d = self.clone()
+        d.setUuid("")
+        d.status = "Checking..."
+        return d
+
 
 class IAdbDevice(TargetDeviceAbstract, ABC):
     def __init__(self, serial_number: str, adb_manager: ADBManager, uuid: str = "", status: str = "Unknown", usb_port: str = ""):
@@ -166,6 +196,18 @@ class IAdbDevice(TargetDeviceAbstract, ABC):
 
     def activate(self, signature: str) -> CommandResult:
         return self.adb_manager.activate_device(self.getSerialNumber(), signature)
+
+    def fetch_uuid(self) -> CommandResult:
+        result = self.adb_manager.get_device_uuid(self.getSerialNumber())
+        if result.success and result.result_data:
+            self.setUuid(result.result_data)
+        return result
+
+    def fetch_state(self) -> CommandResult:
+        result = self.adb_manager.get_device_state(self.getSerialNumber())
+        if result.success and result.result_data:
+            self.setStatus(result.result_data)
+        return result
 
 
 class AC8267Device(IAdbDevice):
@@ -224,6 +266,9 @@ class SimulatorDevice(TargetDeviceAbstract):
         self.setStatus("Authorized")
         return CommandResult(success=True, status_code=0, result_data="Authorized", raw_output="")
 
+    def to_await_device(self):
+        return self.clone()
+
 
 class UnknownDevice(TargetDeviceAbstract):
     def __init__(self, detection_method: str, serial_number: str, is_simulation: bool = False, usb_port: str = ""):
@@ -246,3 +291,14 @@ class UnknownDevice(TargetDeviceAbstract):
             error_message="UnknownDevice cannot be activated",
             raw_output="",
         )
+
+    def fetch_uuid(self) -> CommandResult:
+        return CommandResult(
+            success=False,
+            status_code=1,
+            error_message="UnknownDevice UUID unavailable",
+            raw_output="",
+        )
+
+    def fetch_state(self) -> CommandResult:
+        return CommandResult(success=False, status_code=1, result_data="Unknown", raw_output="Unknown")
