@@ -124,10 +124,10 @@ class SimulateCube(ICube):
 
         try:
             key = self._read_private_key()
-            if len(uuid_bytes) == 32:
-                der = key.sign(uuid_bytes, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
-            else:
-                der = key.sign(uuid_bytes, ec.ECDSA(hashes.SHA256()))
+            digest = hashes.Hash(hashes.SHA256())
+            digest.update(uuid_bytes)
+            hashed_uuid = digest.finalize()
+            der = key.sign(hashed_uuid, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
             r, s = decode_dss_signature(der)
             signature = (r.to_bytes(32, byteorder="big") + s.to_bytes(32, byteorder="big")).hex()
             self._config.counter -= 1

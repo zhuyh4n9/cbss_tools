@@ -7,3 +7,4 @@ build/
 src/__pycache__/
 dist/
 package/
+.venv/

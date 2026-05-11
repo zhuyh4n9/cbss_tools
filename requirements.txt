@@ -1,5 +1,8 @@
 # Requirements for Authenticator Box PC Tool
 # GUI Framework
 tkinter
+# Cryptography for activation code handling
+cryptography
+# Build / packaging
 # Standard library modules (usually included with Python)
 # configparser, datetime, subprocess, threading, json, logging, os

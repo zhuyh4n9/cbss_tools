@@ -87,8 +87,15 @@ class QuickStressTester:
             logging.error(f"加载公钥失败: {e}")
             return False
 
-    def verify_signature(self, uuid_hex: str, signature_hex: str, prehashed = True) -> bool:
-        """验证签名（RAW格式，不计算hash）"""
+    def verify_signature(self, uuid_hex: str, signature_hex: str, prehashed=True) -> bool:
+        """验证签名（RAW格式）
+
+        Args:
+            uuid_hex: 待验证数据的hex字符串（UUID或已hash数据的hex）
+            signature_hex: RAW签名hex字符串（64字节, r||s）
+            prehashed: 如果为True，表示uuid_hex已经是SHA-256 hash值，直接验证；
+                       如果为False，则先对uuid_bytes计算SHA-256再验证。
+        """
         try:
             # 将hex字符串转换为字节
             uuid_bytes = bytes.fromhex(uuid_hex)
@@ -106,13 +113,17 @@ class QuickStressTester:
             der_signature = encode_dss_signature(r, s)
 
             if prehashed:
+                # uuid_hex已经是SHA-256 hash值，直接作为prehashed数据验证
                 algo = ec.ECDSA(utils.Prehashed(hashes.SHA256()))
+                verify_data = uuid_bytes
             else:
+                # 先对uuid_bytes计算SHA-256 hash，再验证
                 algo = ec.ECDSA(hashes.SHA256())
-            # 验证签名（使用Prehashed，不计算hash）
+                verify_data = uuid_bytes
+
             self.public_key.verify(
                 der_signature,
-                uuid_bytes,
+                verify_data,
                 algo)
             return True
         except Exception as e:
@@ -141,7 +152,7 @@ class QuickStressTester:
                 duration = time.time() - start_time
                 total_time += duration
                 if result.success:
-                    if self.verify_signature(uuid, result.result_data):
+                    if self.verify_signature(uuid, result.result_data, prehashed=False):
                         success_count += 1
                         if i < 5:
                             logging.info(f"签名成功 #{i+1}: 用时 {duration:.3f}s")
