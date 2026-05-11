@@ -29,7 +29,6 @@ def _load_dependencies(prefix):
     device_monitor_module = importlib.import_module(f"{prefix}.device_monitor")
     auth_module = importlib.import_module(f"{prefix}.auth_manager")
     prompt_module = importlib.import_module(f"{prefix}.prompt_manager")
-    build_options_module = importlib.import_module(f"{prefix}.build_options")
     diaglog_module = importlib.import_module(f"{prefix}.diaglog")
     return (
         config_module.ConfigManager,
@@ -40,7 +39,6 @@ def _load_dependencies(prefix):
         device_monitor_module.DeviceMonitor,
         auth_module.AuthenticationManager,
         prompt_module.PromptManager,
-        build_options_module.SIMULATED_DEVICE_STATUS_OPTIONS,
         diaglog_module.LogLevelDialog,
         diaglog_module.LogViewDialog,
         diaglog_module.AuthenticatorOperationDialog,
@@ -63,7 +61,6 @@ def _load_dependencies(prefix):
     DeviceMonitor,
     AuthenticationManager,
     PromptManager,
-    SIMULATED_DEVICE_STATUS_OPTIONS,
     LogLevelDialog,
     LogViewDialog,
     AuthenticatorOperationDialog,
@@ -188,6 +185,7 @@ class AuthenticatorToolGUI:
             variable=self.auto_activation_menu_var,
             command=self.toggle_auto_activation
         )
+        tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.clear_logs'), command=self.clear_logs_from_tools_menu)
         tools_menu.add_separator()
         if self.auth_manager.is_simulated_device_enabled():
             tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.create_simulated_cube'), command=self.show_create_simulated_cube_dialog)
@@ -304,13 +302,6 @@ class AuthenticatorToolGUI:
         self.refresh_button.pack(side=tk.LEFT, padx=(0,5))
         self.activate_all_button = ttk.Button(button_frame, text=self.prompt_mgr.get('UI.activate_all_btn'), command=self.authenticate_all_devices)
         self.activate_all_button.pack(side=tk.LEFT)
-        if self.auth_manager.is_simulated_device_enabled():
-            self.add_simulated_device_button = ttk.Button(
-                button_frame,
-                text=self.prompt_mgr.get('UI.add_simulated_device_btn'),
-                command=self.show_add_simulated_device_dialog
-            )
-            self.add_simulated_device_button.pack(side=tk.LEFT, padx=(5, 0))
         device_columns = (
             self.prompt_mgr.get('DeviceTable.col_serial'),
             self.prompt_mgr.get('DeviceTable.col_uuid'),
@@ -720,19 +711,34 @@ class AuthenticatorToolGUI:
             text_widget.insert('1.0', detailed_info)
             text_widget.config(state=tk.DISABLED)
 
-    def update_device_display(self, devices: List[DeviceInfo]):
-        """更新设备显示"""
-        all_devices = list(devices or [])
-        if self.auth_manager.is_simulated_device_enabled():
-            all_devices.extend(self.auth_manager.get_simulated_devices())
-
-        logging.debug(f"Updating device display with {len(all_devices)} devices")
-        show_na_devices = self.config_manager.getboolean('UI', 'show_na_devices', False)
-        auto_enabled = self.auth_manager.is_auto_activation_enabled()
+    def _resolve_device_action_heading(self, serial: str, status_lower: str, uuid_display: str, auto_enabled: bool) -> str:
         manual_available_text = self.prompt_mgr.get('DeviceTable.action_manual_activate')
         manual_unavailable_text = self.prompt_mgr.get('DeviceTable.action_unavailable')
         auto_waiting_text = self.prompt_mgr.get('DeviceTable.action_waiting_auto')
         auto_done_text = self.prompt_mgr.get('DeviceTable.action_auto_completed')
+        auto_anomaly_text = self.prompt_mgr.get('DeviceTable.action_auto_queue_anomaly')
+        uuid_ready = self._is_uuid_ready(uuid_display)
+
+        if auto_enabled:
+            if self.auth_manager.is_device_auto_activation_completed(serial):
+                return auto_done_text
+            if status_lower == "unauthorized" and uuid_ready:
+                if self.auth_manager.is_device_queued_for_auto_activation(serial):
+                    return auto_waiting_text
+                return auto_anomaly_text
+            return manual_unavailable_text
+
+        if status_lower == "unauthorized" and uuid_ready:
+            return manual_available_text
+        return manual_unavailable_text
+
+    def update_device_display(self, devices: List[DeviceInfo]):
+        """更新设备显示"""
+        all_devices = list(devices or [])
+
+        logging.debug(f"Updating device display with {len(all_devices)} devices")
+        show_na_devices = self.config_manager.getboolean('UI', 'show_na_devices', False)
+        auto_enabled = self.auth_manager.is_auto_activation_enabled()
         rows = []
         seen_serials = set()
         for device in all_devices:
@@ -755,15 +761,12 @@ class AuthenticatorToolGUI:
             else:
                 uuid_display = uuid_text if uuid_text else "获取中..."
 
-            if auto_enabled:
-                if self.auth_manager.is_device_auto_activation_completed(device.serial):
-                    heading = auto_done_text
-                elif status_lower == "unauthorized" and self._is_uuid_ready(uuid_display) and self.auth_manager.is_device_queued_for_auto_activation(device.serial):
-                    heading = auto_waiting_text
-                else:
-                    heading = manual_unavailable_text
-            else:
-                heading = manual_available_text if (status_lower == "unauthorized" and self._is_uuid_ready(uuid_display)) else manual_unavailable_text
+            heading = self._resolve_device_action_heading(
+                serial=str(device.serial),
+                status_lower=status_lower,
+                uuid_display=uuid_display,
+                auto_enabled=auto_enabled,
+            )
             rows.append((
                 "serial:" + str(device.serial),
                 uuid_display,
@@ -916,6 +919,28 @@ class AuthenticatorToolGUI:
         """查看日志"""
         dialog = LogViewDialog(self.root, self.log_manager, self.prompt_mgr)
 
+    def clear_logs_from_tools_menu(self):
+        """从工具菜单清空日志"""
+        if not messagebox.askyesno(
+            self.prompt_mgr.get('Common.confirm_title'),
+            self.prompt_mgr.get('Text.confirm_clear_log')
+        ):
+            return
+
+        action_name = self.prompt_mgr.get('MenuItems.clear_logs')
+        if self.log_manager.clear_logs():
+            self.status_var.set(self.prompt_mgr.get('Text.log_cleared'))
+            messagebox.showinfo(
+                self.prompt_mgr.get('Common.success_title'),
+                self.prompt_mgr.format('InfoMessages.operation_success', name=action_name)
+            )
+            return
+
+        messagebox.showerror(
+            self.prompt_mgr.get('Common.fail_title'),
+            self.prompt_mgr.format('InfoMessages.operation_fail', name=action_name)
+        )
+
     def show_help(self):
         """显示帮助信息"""
         help_text = self.prompt_mgr.get('Text.help_content').replace('\\n', '\n')
@@ -933,7 +958,7 @@ class AuthenticatorToolGUI:
     def show_about(self):
         """显示关于信息"""
         company = self.config_manager.get('About', 'company', 'Autochips Inc')
-        version = self.config_manager.get('General', 'version', '3.1.4')
+        version = self.config_manager.get('General', 'version', '3.1.6')
         description = self.config_manager.get('About', 'description', self.prompt_mgr.get('Dialogs.about_desc'))
 
         about_text = f"""
@@ -1454,43 +1479,6 @@ class AuthenticatorToolGUI:
         """判断UUID是否已准备好"""
         value = (uuid_text or "").strip()
         return value not in ("", "-", "获取中...", "Checking...")
-
-    def show_add_simulated_device_dialog(self):
-        """显示添加模拟设备弹窗"""
-        if not self.auth_manager.is_simulated_device_enabled():
-            messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self.prompt_mgr.get('Errors.simulated_device_disabled'))
-            return
-
-        dialog = tk.Toplevel(self.root)
-        dialog.title(self.prompt_mgr.get('Dialogs.add_simulated_device_title'))
-        dialog.geometry("380x180")
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        ttk.Label(dialog, text=self.prompt_mgr.get('Dialogs.simulated_device_status_label'), font=('Arial', 10)).pack(pady=(20, 10))
-
-        status_var = tk.StringVar(value="Unauthorized")
-        status_combo = ttk.Combobox(
-            dialog,
-            textvariable=status_var,
-            values=list(SIMULATED_DEVICE_STATUS_OPTIONS),
-            state="readonly",
-            width=30
-        )
-        status_combo.pack(pady=5)
-
-        def on_confirm():
-            try:
-                status = status_var.get().strip()
-                self.auth_manager.add_simulated_device(status)
-                self.update_device_display(self.device_monitor.target_devices)
-                self.status_var.set(self.prompt_mgr.format('InfoMessages.simulated_device_added', status=status))
-                dialog.destroy()
-            except Exception as e:
-                messagebox.showerror(self.prompt_mgr.get('Common.error_title'), self.prompt_mgr.format('Errors.unknown_error', msg=str(e)))
-
-        ttk.Button(dialog, text=self.prompt_mgr.get('Buttons.ok'), command=on_confirm).pack(pady=(15, 5))
-        ttk.Button(dialog, text=self.prompt_mgr.get('Buttons.cancel'), command=dialog.destroy).pack(pady=5)
 
     def show_create_simulated_cube_dialog(self):
         dialog = tk.Toplevel(self.root)

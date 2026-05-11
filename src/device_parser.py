@@ -12,7 +12,7 @@ from typing import Callable, Dict, List
 from .adb_manager import ADBManager, DeviceInfo
 from .device_classification_strategy import DeviceClassificationStrategy
 from .cube_manager import CubeManager
-from .target_device import TargetDeviceAbstract, UnknownAdbDevice, UnknownDevice
+from .target_device import TargetDeviceAbstract, UnknownAdbDevice, UnknownDevice, SimulatorDevice
 
 
 class DeviceParser:
@@ -91,6 +91,15 @@ class DeviceParser:
         detection_method = (device.detection_method or "Unknown").strip() or "Unknown"
         serial = str(device.serial)
         usb_port = str(device.usb_port or "")
+        if bool(device.is_simulation):
+            return SimulatorDevice(
+                detection_method=detection_method,
+                serial_number=serial,
+                is_simulation=True,
+                uuid=str(device.uuid or ""),
+                status=device.status or "Unknown",
+                usb_port=usb_port,
+            )
         if detection_method.lower() == "adb":
             return UnknownAdbDevice(
                 serial_number=serial,
@@ -145,6 +154,13 @@ class DeviceParser:
 
             removed = current - new
             added = new - current
+            if added or removed:
+                logging.info(
+                    "设备同步变化: 新增=%s, 移除=%s, 待分类队列=%d",
+                    sorted(added) if added else [],
+                    sorted(removed) if removed else [],
+                    len(self._classify_queue),
+                )
 
             for serial in removed:
                 removed_info = self._base_devices.get(serial)
@@ -293,6 +309,14 @@ class DeviceParser:
                         continue
 
                     decision = self._classification_strategy.classify_device(classify_serial, base, known_cube)
+                    logging.info(
+                        "设备分类: serial=%s, known_cube=%s, ready_device=%s, add_cube=%s, mark_unknown=%s",
+                        classify_serial,
+                        known_cube,
+                        type(decision.ready_device).__name__ if decision.ready_device else "None",
+                        decision.should_add_cube,
+                        decision.should_mark_unknown,
+                    )
 
                     with self._lock:
                         base = self._base_devices.get(classify_serial)
@@ -315,6 +339,7 @@ class DeviceParser:
                                 self._ready_queue.pop(classify_serial, None)
 
                     if decision.should_add_cube:
+                        logging.info(f"识别为Cube并加入管理: {classify_serial}")
                         self.cube_manager.add_cube(classify_serial)
 
                     self._notify_callbacks('device_update', self.get_devices())
@@ -344,6 +369,13 @@ class DeviceParser:
                         ready_device = refreshed
                     self._await_queue.pop(serial, None)
                     self._ready_queue[serial] = ready_device
+                logging.info(
+                    "设备解析完成: serial=%s, type=%s, status=%s, uuid_ready=%s",
+                    serial,
+                    ready_device.getType(),
+                    ready_device.getStatus(),
+                    bool(ready_device.getUuid()),
+                )
 
                 self._notify_callbacks('device_update', self.get_devices())
                 if ready_device.getStatus().strip().lower() == "unauthorized" and ready_device.getUuid():

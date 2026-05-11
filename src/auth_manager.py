@@ -11,6 +11,7 @@ import os
 from typing import List, Optional, Callable, Dict
 from .adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
 from .device_monitor import DeviceMonitor
+from .device_source import SimulationDeviceSource
 from .build_options import ENABLE_SIMULATED_DEVICE, SIMULATED_DEVICE_STATUS_OPTIONS
 from .target_device import AC8267Device, ITargetDevice, SimulatorDevice
 from .cube import ICube, RealCube, SimulateCube, SimulateCubeConfig
@@ -44,6 +45,8 @@ class AuthenticationManager:
 
         # 始终注册回调，是否入队由开关控制
         self.device_monitor.device_parser.add_callback('unauthorized_ready', self._on_unauthorized_ready)
+        if self.is_simulated_device_enabled() and hasattr(self.device_monitor, "register_device_source"):
+            self.device_monitor.register_device_source(SimulationDeviceSource(self.get_simulated_devices))
 
         if self._auto_activation_enabled:
             self._start_activate_worker()
@@ -120,7 +123,7 @@ class AuthenticationManager:
         try:
             if not self._auto_activation_enabled or not device:
                 return
-            serial = str(device.serial)
+            serial = str(device.serial or "").strip()
             if not serial:
                 return
             if not (device.status and device.status.strip().lower() == "unauthorized"):
@@ -158,10 +161,6 @@ class AuthenticationManager:
     def _is_device_still_unauthorized(self, serial: str) -> bool:
         try:
             device = self.device_monitor.get_device_by_serial(serial)
-            if not device and self.is_simulated_device(serial):
-                with self._simulated_lock:
-                    simulated = self._simulated_devices.get(str(serial))
-                    device = simulated.to_device_info() if simulated else None
             if not device:
                 return False
             status = (device.status or "").strip().lower()
@@ -182,12 +181,14 @@ class AuthenticationManager:
             if serial is None:
                 break
 
-            serial = str(serial)
-            with self._queue_lock:
-                self._queued_serials.discard(serial)
+            serial = str(serial or "").strip()
+            if not serial:
+                continue
 
             # 设备状态变化后无需处理
             if not self._is_device_still_unauthorized(serial):
+                with self._queue_lock:
+                    self._queued_serials.discard(serial)
                 continue
 
             authenticator_serial = self._pick_authenticator()
@@ -204,6 +205,7 @@ class AuthenticationManager:
             with self._queue_lock:
                 if serial in self._in_progress_serials:
                     continue
+                self._queued_serials.discard(serial)
                 self._in_progress_serials.add(serial)
 
             try:
@@ -269,37 +271,30 @@ class AuthenticationManager:
 
         return device.to_device_info()
 
-    def _activate_simulated_device(self, serial: str) -> dict:
+    def _resolve_target_device(self, device_serial: str) -> ITargetDevice:
+        """Resolve target device instance by serial for unified authentication flow."""
+        serial = str(device_serial or "").strip()
         with self._simulated_lock:
-            device = self._simulated_devices.get(str(serial))
-            if not device:
-                return {
-                    'success': False,
-                    'message': f'模拟设备不存在: {serial}',
-                    'details': ''
-                }
+            simulated = self._simulated_devices.get(serial)
+            if simulated:
+                return simulated
 
-            status = (device.getStatus() or "").strip().lower()
-            if status != "unauthorized":
-                return {
-                    'success': False,
-                    'message': f'模拟设备状态非Unauthorized，无法激活: {device.getStatus()}',
-                    'details': ''
-                }
+        device_info = None
+        getter = getattr(self.device_monitor, "get_device_by_serial", None)
+        if callable(getter):
+            device_info = getter(serial)
 
-            activate_result = device.activate("simulated-signature")
-            if not activate_result.success:
-                return {
-                    'success': False,
-                    'message': activate_result.error_message or '模拟设备激活失败',
-                    'details': activate_result.raw_output
-                }
-
-        return {
-            'success': True,
-            'message': f'设备激活成功: {serial}',
-            'details': '模拟设备已从Unauthorized切换为Authorized'
-        }
+        target_device = ITargetDevice.CreateAdbDevice(serial, self.adb_manager)
+        if not isinstance(target_device, AC8267Device):
+            target_device = AC8267Device(
+                serial_number=serial,
+                adb_manager=self.adb_manager,
+                uuid=(device_info.uuid if device_info else ""),
+                status=(device_info.status if device_info else "Unknown")
+            )
+        if not target_device.getUuid() and device_info and device_info.uuid:
+            target_device.setUuid(device_info.uuid)
+        return target_device
 
     def authenticate_device(self, device_serial: str, authenticator_serial: str,
                           progress_callback: Optional[Callable] = None) -> dict:
@@ -411,89 +406,40 @@ class AuthenticationManager:
         try:
             logging.info(f"开始激活设备: {device_serial}")
 
-            if self.is_simulated_device(device_serial):
-                cube = self._resolve_cube(authenticator_serial)
-                if progress_callback:
-                    progress_callback("正在准备模拟设备认证...")
-
-                with self._simulated_lock:
-                    simulated_device = self._simulated_devices.get(str(device_serial))
-
-                if not simulated_device:
-                    return {
-                        'success': False,
-                        'message': f'模拟设备不存在: {device_serial}',
-                        'details': ''
-                    }
-
-                device_uuid = (simulated_device.getUuid() or "").strip()
-                if not device_uuid:
-                    return {
-                        'success': False,
-                        'message': "设备UUID为空",
-                        'details': ''
-                    }
-
-                if progress_callback:
-                    progress_callback("正在使用激活盒子签名...")
-
-                sign_result = cube.sign_uuid(device_uuid)
-                if not sign_result.success:
-                    error_msg = f"激活盒子签名失败: {sign_result.error_message}"
-                    logging.error(error_msg)
-                    return {
-                        'success': False,
-                        'message': error_msg,
-                        'details': sign_result.raw_output
-                    }
-
-                signature = (sign_result.result_data or "").strip()
-                if not signature:
-                    error_msg = "签名结果为空"
-                    logging.error(error_msg)
-                    return {
-                        'success': False,
-                        'message': error_msg,
-                        'details': sign_result.raw_output
-                    }
-
-                if progress_callback:
-                    progress_callback("正在激活模拟设备...")
-
-                simulated_activate_result = self._activate_simulated_device(device_serial)
-                if not simulated_activate_result.get('success'):
-                    return simulated_activate_result
-
-                success_msg = f"设备激活成功: {device_serial}"
-                return {
-                    'success': True,
-                    'message': success_msg,
-                    'details': f"UUID: {device_uuid}\n签名: {signature}\n状态: 已激活(模拟设备)"
-                }
-
             # 步骤1: 获取设备UUID
             cube = self._resolve_cube(authenticator_serial)
+            target_device = self._resolve_target_device(device_serial)
             if progress_callback:
                 progress_callback("正在获取设备UUID...")
 
-            uuid_result = self.adb_manager.get_device_uuid(device_serial)
-            if not uuid_result.success:
-                error_msg = f"获取设备UUID失败: {uuid_result.error_message}"
-                logging.error(error_msg)
-                return {
-                    'success': False,
-                    'message': error_msg,
-                    'details': uuid_result.raw_output
-                }
-
-            device_uuid = uuid_result.result_data
+            device_uuid = target_device.getUuid()
+            if not device_uuid:
+                if target_device.getDetectionMethod().strip().lower() != "adb":
+                    error_msg = "设备UUID为空"
+                    logging.error(error_msg)
+                    return {
+                        'success': False,
+                        'message': error_msg,
+                        'details': ''
+                    }
+                uuid_result = self.adb_manager.get_device_uuid(device_serial)
+                if not uuid_result.success:
+                    error_msg = f"获取设备UUID失败: {uuid_result.error_message}"
+                    logging.error(error_msg)
+                    return {
+                        'success': False,
+                        'message': error_msg,
+                        'details': uuid_result.raw_output
+                    }
+                device_uuid = uuid_result.result_data
+                target_device.setUuid(device_uuid)
             if not device_uuid:
                 error_msg = "设备UUID为空"
                 logging.error(error_msg)
                 return {
                     'success': False,
                     'message': error_msg,
-                    'details': uuid_result.raw_output
+                    'details': ''
                 }
 
             logging.info(f"获取到设备UUID: {device_uuid}")
@@ -528,16 +474,6 @@ class AuthenticationManager:
             if progress_callback:
                 progress_callback("正在激活设备...")
 
-            target_device = ITargetDevice.CreateAdbDevice(device_serial, self.adb_manager)
-            if not isinstance(target_device, AC8267Device):
-                target_device = AC8267Device(
-                    serial_number=device_serial,
-                    adb_manager=self.adb_manager,
-                    uuid=device_uuid,
-                    status="Unknown"
-                )
-            if not target_device.getUuid():
-                target_device.setUuid(device_uuid)
             activate_result = target_device.activate(signature)
             if not activate_result.success:
                 error_msg = f"设备激活失败: {activate_result.error_message}"
@@ -559,8 +495,17 @@ class AuthenticationManager:
             if progress_callback:
                 progress_callback("正在验证激活状态...")
 
-            state_result = self.adb_manager.get_device_state(device_serial)
-            if state_result.success and state_result.result_data == "Authorized":
+            if target_device.getDetectionMethod().strip().lower() == "adb":
+                state_result = self.adb_manager.get_device_state(device_serial)
+                verify_success = state_result.success and state_result.result_data == "Authorized"
+                verify_error = state_result.error_message
+                verify_output = state_result.raw_output
+            else:
+                verify_success = (target_device.getStatus() or "").strip().lower() == "authorized"
+                verify_error = ""
+                verify_output = target_device.getStatus()
+
+            if verify_success:
                 success_msg = f"设备激活成功: {device_serial}"
                 logging.info(success_msg)
                 return {
@@ -569,12 +514,12 @@ class AuthenticationManager:
                     'details': f"UUID: {device_uuid}\n签名: {signature}\n状态: 已激活"
                 }
             else:
-                error_msg = f"设备激活可能失败，状态验证异常: {state_result.error_message}"
+                error_msg = f"设备激活可能失败，状态验证异常: {verify_error}"
                 logging.warning(error_msg)
                 return {
                     'success': False,
                     'message': error_msg,
-                    'details': state_result.raw_output
+                    'details': verify_output
                 }
 
         except Exception as e:
@@ -689,9 +634,6 @@ class AuthenticationManager:
         """获取未激活设备列表"""
         unauthorized_devices = []
         for device in self.device_monitor.get_ready_devices():
-            if (device.status or "").strip().lower() == "unauthorized" and device.uuid:
-                unauthorized_devices.append(device)
-        for device in self.get_simulated_devices():
             if (device.status or "").strip().lower() == "unauthorized" and device.uuid:
                 unauthorized_devices.append(device)
         return unauthorized_devices
