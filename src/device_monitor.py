@@ -9,7 +9,9 @@ from typing import List, Dict, Callable, Optional
 from datetime import datetime, timedelta
 from .adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
 from .device_parser import DeviceParser
-from .device_source import DeviceSource, AdbDeviceSource
+from .build_options import ENABLE_SIMULATED_DEVICE, SIMULATED_DEVICE_STATUS_OPTIONS
+from .device_source import DeviceSource, AdbDeviceSource, SimulationDeviceSource
+from .target_device import ITargetDevice, SimulatorDevice
 
 
 class DeviceMonitor:
@@ -24,6 +26,11 @@ class DeviceMonitor:
         self._device_sources: Dict[str, DeviceSource] = {
             'Adb': AdbDeviceSource(self.adb_manager)
         }
+        self._simulated_devices: Dict[str, SimulatorDevice] = {}
+        self._simulated_counter = 0
+        self._simulated_lock = threading.Lock()
+        if self.is_simulated_device_enabled():
+            self.register_device_source(SimulationDeviceSource(self.get_simulated_devices))
 
         self.device_parser = DeviceParser(self.adb_manager)
         self.device_parser.add_callback('device_update', self._on_device_parser_update)
@@ -43,6 +50,36 @@ class DeviceMonitor:
         self.refresh_interval = 1.0 / max(self.refresh_rate, 1)
         self.cube_refresh_interval = max(self.config.getint('General', 'cube_refresh_interval', 5), 1)
         self._last_cube_refresh_time = 0.0
+
+    @staticmethod
+    def _device_signature(device: DeviceInfo):
+        return (
+            device.serial,
+            device.status,
+            device.usb_port,
+            device.detection_method,
+            device.is_simulation,
+        )
+
+    def _has_connected_index_changed(self, new_connected_index: Dict[str, DeviceInfo]) -> bool:
+        if set(self._connected_index.keys()) != set(new_connected_index.keys()):
+            return True
+        for serial, new_device in new_connected_index.items():
+            old_device = self._connected_index.get(serial)
+            if old_device is None:
+                return True
+            if self._device_signature(old_device) != self._device_signature(new_device):
+                return True
+        return False
+
+    def _collect_connected_changes(self, new_connected_index: Dict[str, DeviceInfo]):
+        changed = []
+        for serial in sorted(set(self._connected_index.keys()) & set(new_connected_index.keys())):
+            old_device = self._connected_index[serial]
+            new_device = new_connected_index[serial]
+            if self._device_signature(old_device) != self._device_signature(new_device):
+                changed.append((old_device, new_device))
+        return changed
 
     def start_monitoring(self):
         """开始设备监控"""
@@ -99,6 +136,51 @@ class DeviceMonitor:
         if event_type in self._callbacks:
             self._callbacks[event_type].append(callback)
 
+    def is_simulated_device_enabled(self) -> bool:
+        return ENABLE_SIMULATED_DEVICE
+
+    def is_simulated_device(self, serial: str) -> bool:
+        serial = str(serial or "")
+        with self._simulated_lock:
+            return serial in self._simulated_devices
+
+    def get_simulated_devices(self) -> List[DeviceInfo]:
+        with self._simulated_lock:
+            return [device.to_device_info() for device in self._simulated_devices.values()]
+
+    def get_simulated_device(self, serial: str) -> Optional[SimulatorDevice]:
+        serial = str(serial or "")
+        with self._simulated_lock:
+            return self._simulated_devices.get(serial)
+
+    def add_simulated_device(self, status: str) -> DeviceInfo:
+        if not self.is_simulated_device_enabled():
+            raise RuntimeError("模拟设备功能未启用")
+
+        status_input = (status or "").strip().lower()
+        status_map = {item.lower(): item for item in SIMULATED_DEVICE_STATUS_OPTIONS}
+        normalized_status = status_map.get(status_input, "Unauthorized")
+        if status_input and status_input not in status_map:
+            logging.warning("收到未知模拟设备状态，已回退为Unauthorized: %s", status)
+
+        with self._simulated_lock:
+            self._simulated_counter += 1
+            serial = f"SIM-{self._simulated_counter:04d}"
+            device = ITargetDevice.CreateSimulation(
+                status=normalized_status,
+                serial_number=serial,
+            )
+            if not isinstance(device, SimulatorDevice):
+                raise RuntimeError("模拟设备创建失败")
+            self._simulated_devices[serial] = device
+        logging.info(
+            "已添加模拟设备: serial=%s, status=%s, uuid_ready=%s",
+            serial,
+            device.getStatus(),
+            bool(device.getUuid()),
+        )
+        return device.to_device_info()
+
     def remove_callback(self, event_type: str, callback: Callable):
         """移除回调函数"""
         if event_type in self._callbacks and callback in self._callbacks[event_type]:
@@ -153,6 +235,7 @@ class DeviceMonitor:
             current_serials = set(new_connected_index.keys())
             added = sorted(current_serials - previous_serials)
             removed = sorted(previous_serials - current_serials)
+            changed = self._collect_connected_changes(new_connected_index)
             if added or removed:
                 logging.info(
                     "设备连接变化: 新增=%s, 移除=%s, 当前总数=%d",
@@ -160,8 +243,22 @@ class DeviceMonitor:
                     removed or "[]",
                     len(current_serials),
                 )
-            self._connected_index = new_connected_index
-            self.device_parser.sync_connected_devices(list(new_connected_index.values()))
+            if changed:
+                for old_device, new_device in changed:
+                    logging.info(
+                        "设备状态变化: serial=%s, status=%s->%s, usb_port=%s->%s, detection=%s",
+                        new_device.serial,
+                        old_device.status,
+                        new_device.status,
+                        old_device.usb_port,
+                        new_device.usb_port,
+                        new_device.detection_method,
+                    )
+            if self._has_connected_index_changed(new_connected_index):
+                self._connected_index = new_connected_index
+                self.device_parser.sync_connected_devices(list(new_connected_index.values()))
+            else:
+                logging.debug("设备连接状态无变化，跳过TargetDevice重新解析")
 
             # 激活盒子详情由DeviceParser内部CubeManager更新并回调
 

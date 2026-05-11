@@ -4,16 +4,14 @@
 """
 import logging
 import queue
-import secrets
 import threading
 import time
 import os
 from typing import List, Optional, Callable, Dict
 from .adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
 from .device_monitor import DeviceMonitor
-from .device_source import SimulationDeviceSource
-from .build_options import ENABLE_SIMULATED_DEVICE, SIMULATED_DEVICE_STATUS_OPTIONS
-from .target_device import AC8267Device, ITargetDevice, SimulatorDevice
+from .build_options import ENABLE_SIMULATED_DEVICE
+from .target_device import AC8267Device, ITargetDevice
 from .cube import ICube, RealCube, SimulateCube, SimulateCubeConfig
 
 
@@ -37,16 +35,12 @@ class AuthenticationManager:
         self._worker_running = False
         self._worker_thread = None
         self._stop_event = threading.Event()
-        self._simulated_devices: Dict[str, SimulatorDevice] = {}
-        self._simulated_counter = 0
         self._simulated_lock = threading.Lock()
         self._simulated_cubes: Dict[str, SimulateCube] = {}
         self._simulated_cube_counter = 0
 
         # 始终注册回调，是否入队由开关控制
         self.device_monitor.device_parser.add_callback('unauthorized_ready', self._on_unauthorized_ready)
-        if self.is_simulated_device_enabled() and hasattr(self.device_monitor, "register_device_source"):
-            self.device_monitor.register_device_source(SimulationDeviceSource(self.get_simulated_devices))
 
         if self._auto_activation_enabled:
             self._start_activate_worker()
@@ -236,47 +230,32 @@ class AuthenticationManager:
         return ENABLE_SIMULATED_DEVICE
 
     def is_simulated_device(self, serial: str) -> bool:
-        serial = str(serial or "")
-        with self._simulated_lock:
-            return serial in self._simulated_devices
+        checker = getattr(self.device_monitor, "is_simulated_device", None)
+        if callable(checker):
+            return bool(checker(serial))
+        return False
 
     def get_simulated_devices(self) -> List[DeviceInfo]:
-        with self._simulated_lock:
-            return [device.to_device_info() for device in self._simulated_devices.values()]
+        getter = getattr(self.device_monitor, "get_simulated_devices", None)
+        if callable(getter):
+            return getter()
+        return []
 
     def add_simulated_device(self, status: str) -> DeviceInfo:
         if not self.is_simulated_device_enabled():
             raise RuntimeError("模拟设备功能未启用")
-
-        status_input = (status or "").strip().lower()
-        status_map = {item.lower(): item for item in SIMULATED_DEVICE_STATUS_OPTIONS}
-        normalized_status = status_map.get(status_input, "Unauthorized")
-        if status_input and status_input not in status_map:
-            logging.warning(f"收到未知模拟设备状态，已回退为Unauthorized: {status}")
-
-        with self._simulated_lock:
-            self._simulated_counter += 1
-            serial = f"SIM-{self._simulated_counter:04d}"
-            device = ITargetDevice.CreateSimulation(
-                status=normalized_status,
-                serial_number=serial,
-                uuid=secrets.token_hex(32)
-            )
-            if not isinstance(device, SimulatorDevice):
-                raise RuntimeError("模拟设备创建失败")
-            self._simulated_devices[serial] = device
-
-        if self._auto_activation_enabled and (device.getStatus() or "").strip().lower() == "unauthorized" and device.getUuid():
-            self._on_unauthorized_ready(device.to_device_info())
-
-        return device.to_device_info()
+        adder = getattr(self.device_monitor, "add_simulated_device", None)
+        if not callable(adder):
+            raise RuntimeError("DeviceMonitor不支持添加模拟设备")
+        return adder(status)
 
     def _resolve_target_device(self, device_serial: str) -> ITargetDevice:
         """Resolve target device instance by serial for unified authentication flow."""
         serial = str(device_serial or "").strip()
-        with self._simulated_lock:
-            simulated = self._simulated_devices.get(serial)
-            if simulated:
+        simulation_getter = getattr(self.device_monitor, "get_simulated_device", None)
+        if callable(simulation_getter):
+            simulated = simulation_getter(serial)
+            if simulated is not None:
                 return simulated
 
         device_info = None

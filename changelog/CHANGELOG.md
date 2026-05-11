@@ -1,5 +1,25 @@
 # CBSS工具更新日志
 
+## v3.1.7 (2026-05-11)
+
+### 问题修复
+1. **修复模拟设备开关在环境变量场景下易失效的问题**
+   - `CBSS_ENABLE_SIMULATED_DEVICE` 现在支持 `1/true/yes/on` 等常见真值写法
+   - 避免因环境变量值格式差异导致模拟 Device 功能无法开启
+
+2. **避免重复触发 TargetDevice 解析**
+   - `DeviceMonitor` 仅在设备连接状态发生变化时才触发 `DeviceParser.sync_connected_devices`
+   - ADB 设备探测结果补充保留 `adb devices -l` 的状态字段，用于状态变化识别
+   - 保留激活完成后的显式刷新路径（单设备刷新/必要时全量刷新），减少对 AC8267 的重复解析冲击
+
+3. **设备探测与模拟设备接入日志增强**
+   - 设备探测阶段新增“设备状态变化”日志，记录 serial、status 与 usb_port 变更
+   - `add_simulated_device` 新增关键日志，记录模拟设备 serial、status 与 UUID 就绪情况
+
+4. **模拟设备职责归位到 DeviceMonitor/Main UI**
+   - 模拟设备新增入口由 Main UI 统一调用 `DeviceMonitor.add_simulated_device`
+   - `AuthenticationManager` 不再维护模拟设备新增状态，仅做统一授权流程与设备实例解析
+
 ## v3.1.6 (2026-05-11)
 
 ### 问题修复
