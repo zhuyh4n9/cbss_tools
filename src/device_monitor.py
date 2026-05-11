@@ -163,6 +163,7 @@ class DeviceMonitor:
             return True
 
         for serial, new_device in new_index.items():
+            # 经过上面的key集合比较，这里保证serial一定存在于old_index
             old_device = old_index[serial]
             if (
                 old_device.status != new_device.status or
