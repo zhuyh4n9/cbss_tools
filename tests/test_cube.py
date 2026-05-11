@@ -27,11 +27,20 @@ class _FakeDeviceMonitor:
         self.device_parser = _FakeDeviceParser()
         self.authenticators = {"REAL-001": AuthenticatorInfo(serial="REAL-001", time_status="Ready")}
         self.refresh_all_cube_calls = 0
+        self._simulated_cubes = {}
+        self._simulated_cube_counter = 0
+        self.target_devices = []
 
     def refresh_all_cube(self):
         self.refresh_all_cube_calls += 1
 
     def refresh_device(self, serial: str):
+        pass
+
+    def reparse_device(self, serial: str):
+        pass
+
+    def update_device_status(self, serial: str, new_status: str):
         pass
 
     def get_ready_devices(self):
@@ -42,6 +51,40 @@ class _FakeDeviceMonitor:
 
     def get_authenticator_by_serial(self, serial: str):
         return self.authenticators.get(serial)
+
+    def is_simulated_cube(self, serial: str) -> bool:
+        return str(serial or "") in self._simulated_cubes
+
+    def get_simulated_cube_infos(self):
+        return {s: c.to_authenticator_info() for s, c in self._simulated_cubes.items()}
+
+    def create_simulated_cube(self, expired_date, counter, private_key_path,
+                              cube_id, oem_id, persist_path):
+        self._simulated_cube_counter += 1
+        serial = f"SIM-CUBE-{self._simulated_cube_counter:04d}"
+        from src.cube import SimulateCubeConfig
+        config = SimulateCubeConfig(
+            serial=serial,
+            cube_id=str(cube_id or serial),
+            oem_id=str(oem_id or ""),
+            expired_date=str(expired_date or ""),
+            counter=max(int(counter), 0),
+            private_key_path=str(private_key_path),
+            persist_path=str(persist_path),
+        )
+        cube = SimulateCube.create(config)
+        self._simulated_cubes[serial] = cube
+        self.authenticators[serial] = cube.to_authenticator_info()
+        return serial
+
+    def load_simulated_cube(self, persist_path, private_key_path):
+        self._simulated_cube_counter += 1
+        serial = f"SIM-CUBE-{self._simulated_cube_counter:04d}"
+        cube = SimulateCube.load(persist_path=persist_path, private_key_path=private_key_path,
+                                 serial_override=serial)
+        self._simulated_cubes[serial] = cube
+        self.authenticators[serial] = cube.to_authenticator_info()
+        return serial
 
 
 class _FakeAdbManager:
@@ -125,8 +168,9 @@ class TestSimulateCube(unittest.TestCase):
                     )
                 )
 
-            manager = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=_FakeDeviceMonitor())
-            serial = manager.create_simulated_cube(
+            dm = _FakeDeviceMonitor()
+            manager = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=dm)
+            serial = dm.create_simulated_cube(
                 expired_date="2099-12-31",
                 counter=3,
                 private_key_path=key_path,
@@ -140,9 +184,10 @@ class TestSimulateCube(unittest.TestCase):
             result = manager._perform_authentication("DEV-001", serial)
             self.assertTrue(result["success"])
 
-            manager2 = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=_FakeDeviceMonitor())
-            loaded_serial = manager2.load_simulated_cube(persist_path=persist_path, private_key_path=key_path)
-            self.assertIn(loaded_serial, manager2.get_simulated_cube_infos())
+            dm2 = _FakeDeviceMonitor()
+            manager2 = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=dm2)
+            loaded_serial = dm2.load_simulated_cube(persist_path=persist_path, private_key_path=key_path)
+            self.assertIn(loaded_serial, dm2.get_simulated_cube_infos())
 
 
 if __name__ == "__main__":

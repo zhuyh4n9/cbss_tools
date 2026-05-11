@@ -41,6 +41,7 @@ def _load_dependencies(prefix):
         auth_module.AuthenticationManager,
         prompt_module.PromptManager,
         build_options_module.SIMULATED_DEVICE_STATUS_OPTIONS,
+        build_options_module.ENABLE_SIMULATED_DEVICE,
         diaglog_module.LogLevelDialog,
         diaglog_module.LogViewDialog,
         diaglog_module.AuthenticatorOperationDialog,
@@ -64,6 +65,7 @@ def _load_dependencies(prefix):
     AuthenticationManager,
     PromptManager,
     SIMULATED_DEVICE_STATUS_OPTIONS,
+    ENABLE_SIMULATED_DEVICE,
     LogLevelDialog,
     LogViewDialog,
     AuthenticatorOperationDialog,
@@ -303,7 +305,7 @@ class AuthenticatorToolGUI:
         self.refresh_button.pack(side=tk.LEFT, padx=(0,5))
         self.activate_all_button = ttk.Button(button_frame, text=self.prompt_mgr.get('UI.activate_all_btn'), command=self.authenticate_all_devices)
         self.activate_all_button.pack(side=tk.LEFT)
-        if self.auth_manager.is_simulated_device_enabled():
+        if ENABLE_SIMULATED_DEVICE:
             self.add_simulated_device_button = ttk.Button(
                 button_frame,
                 text=self.prompt_mgr.get('UI.add_simulated_device_btn'),
@@ -476,8 +478,8 @@ class AuthenticatorToolGUI:
     def update_authenticator_display(self, authenticators: Dict[str, AuthenticatorInfo]):
         """更新激活盒子显示"""
         def update_ui():
+            # simulated cubes are already merged into authenticators by auth_manager
             merged_authenticators = dict(authenticators or {})
-            merged_authenticators.update(self.auth_manager.get_simulated_cube_infos())
             self._update_auto_auth_ui_state(len(merged_authenticators))
             # 更新激活盒子选择器
             authenticator_serials = list(merged_authenticators.keys())
@@ -514,7 +516,7 @@ class AuthenticatorToolGUI:
         """更新激活盒子详细信息"""
         if hasattr(self, 'authenticators_data') and serial in self.authenticators_data:
             auth_info = self.authenticators_data[serial]
-            is_simulated_cube = self.auth_manager.is_simulated_cube(serial)
+            is_simulated_cube = self.device_monitor.is_simulated_cube(serial)
 
             # 更新基本信息
             self.serial_id_var.set(serial)
@@ -722,8 +724,7 @@ class AuthenticatorToolGUI:
     def update_device_display(self, devices: List[DeviceInfo]):
         """更新设备显示"""
         all_devices = list(devices or [])
-        if self.auth_manager.is_simulated_device_enabled():
-            all_devices.extend(self.auth_manager.get_simulated_devices())
+        # simulated devices are now in DeviceMonitor.target_devices, already included in 'devices'
 
         logging.debug(f"Updating device display with {len(all_devices)} devices")
         show_na_devices = self.config_manager.getboolean('UI', 'show_na_devices', False)
@@ -1456,7 +1457,7 @@ class AuthenticatorToolGUI:
 
     def show_add_simulated_device_dialog(self):
         """显示添加模拟设备弹窗"""
-        if not self.auth_manager.is_simulated_device_enabled():
+        if not ENABLE_SIMULATED_DEVICE:
             messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self.prompt_mgr.get('Errors.simulated_device_disabled'))
             return
 
@@ -1481,7 +1482,7 @@ class AuthenticatorToolGUI:
         def on_confirm():
             try:
                 status = status_var.get().strip()
-                self.auth_manager.add_simulated_device(status)
+                self.device_monitor.add_simulated_device(status)
                 self.update_device_display(self.device_monitor.target_devices)
                 self.status_var.set(self.prompt_mgr.format('InfoMessages.simulated_device_added', status=status))
                 dialog.destroy()
@@ -1526,7 +1527,7 @@ class AuthenticatorToolGUI:
 
         def on_create():
             try:
-                serial = self.auth_manager.create_simulated_cube(
+                serial = self.device_monitor.create_simulated_cube(
                     expired_date=expire_var.get().strip(),
                     counter=int(counter_var.get().strip() or "0"),
                     private_key_path=key_path_var.get().strip(),
@@ -1568,7 +1569,7 @@ class AuthenticatorToolGUI:
 
         def on_load():
             try:
-                serial = self.auth_manager.load_simulated_cube(
+                serial = self.device_monitor.load_simulated_cube(
                     persist_path=cube_path_var.get().strip(),
                     private_key_path=key_path_var.get().strip(),
                 )
@@ -1738,9 +1739,12 @@ class AuthenticatorToolGUI:
         else:
             self.status_var.set(self.prompt_mgr.get('Text.activation_fail'))
             messagebox.showerror(self.prompt_mgr.get('Common.fail_title'), result['message'])
-        # 单设备激活完成后（无论成功失败）刷新该设备解析状态
+
+        # 激活完成后：立即更新UI状态 + 通知parser异步重新获取（不产生重复入队）
         if device_serial:
-            self.device_monitor.refresh_device(device_serial)
+            if result.get('success'):
+                self.device_monitor.update_device_status(device_serial, "Authorized")
+            self.device_monitor.reparse_device(device_serial)
             self.device_monitor.refresh_all_cube()
 
     def on_batch_authentication_complete(self, result: dict, progress_dialog):
@@ -1754,7 +1758,13 @@ class AuthenticatorToolGUI:
         else:
             self.status_var.set(self.prompt_mgr.get('Text.batch_activation_fail_status'))
             messagebox.showerror(self.prompt_mgr.get('Common.fail_title'), result['message'])
-        # 批量激活完成后刷新全部设备解析状态
+
+        # 批量激活完成后：立即更新UI状态 + 通知parser异步重新获取
+        for item in result.get('results', []):
+            if item.get('success'):
+                self.device_monitor.update_device_status(item['device_serial'], "Authorized")
+                self.device_monitor.reparse_device(item['device_serial'])
+
         self.device_monitor.refresh_all_device()
 
     def on_authentication_error(self, error_message: str, progress_dialog, device_serial: str = None):

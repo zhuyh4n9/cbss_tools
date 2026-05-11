@@ -205,7 +205,7 @@ class DeviceParser:
         self._notify_callbacks('device_update', self.get_devices())
 
     def refresh_device(self, serial: str):
-        """刷新单个设备：ready -> await"""
+        """刷新单个设备：ready -> await（清空UUID/状态，用于用户手动刷新）"""
         serial = str(serial)
         forwarded_to_cube = False
         with self._lock:
@@ -217,6 +217,19 @@ class DeviceParser:
 
         if forwarded_to_cube:
             self.cube_manager.refresh_cube(serial)
+
+        self._notify_callbacks('device_update', self.get_devices())
+        self._wake_event.set()
+
+    def reparse_device(self, serial: str):
+        """激活后重新获取设备状态：ready -> await（保留UUID/状态，避免UI闪烁和重复入队）"""
+        serial = str(serial)
+        with self._lock:
+            if serial in self._ready_queue:
+                dev = self._ready_queue.pop(serial)
+                # 保留当前UUID和状态，仅放入await队列等待解析器重新获取
+                preserved = copy.deepcopy(dev)
+                self._await_queue[serial] = preserved
 
         self._notify_callbacks('device_update', self.get_devices())
         self._wake_event.set()

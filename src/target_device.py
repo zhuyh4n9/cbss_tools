@@ -81,6 +81,34 @@ class ITargetDevice(ABC):
     def to_device_info(self) -> DeviceInfo:
         pass
 
+    @abstractmethod
+    def refreshDeviceMeta(self) -> None:
+        """获取设备元信息（uuid/status/port），完成后清除dirty标记"""
+        pass
+
+    @abstractmethod
+    def markDirty(self, parser_kick: 'DeviceParser' = None) -> None:
+        """标记设备状态不可信，若未锁定则设为dirty并kick parser刷新"""
+        pass
+
+    @abstractmethod
+    def lock(self) -> bool:
+        """锁定设备，返回是否成功"""
+        pass
+
+    @abstractmethod
+    def unlock(self, parser_kick: 'DeviceParser' = None) -> None:
+        """解锁设备，检查待处理dirty事件并kick parser"""
+        pass
+
+    @abstractmethod
+    def isDirty(self) -> bool:
+        pass
+
+    @abstractmethod
+    def isLocked(self) -> bool:
+        pass
+
 
 class TargetDeviceAbstract(ITargetDevice, ABC):
     def __init__(
@@ -98,6 +126,9 @@ class TargetDeviceAbstract(ITargetDevice, ABC):
         self.uuid = str(uuid or "")
         self.status = _normalize_status(status)
         self.usb_port = str(usb_port or "")
+        self._dirty = False
+        self._locked = False
+        self._pending_dirty = False
 
     def getType(self) -> str:
         return self.__class__.__name__
@@ -128,6 +159,41 @@ class TargetDeviceAbstract(ITargetDevice, ABC):
 
     def clone(self):
         return copy.deepcopy(self)
+
+    # ---- Dirty / Lock 状态管理 ----
+
+    def markDirty(self, parser_kick=None) -> None:
+        """标记设备状态不可信，若未锁定则设为dirty并kick parser刷新"""
+        if self._locked:
+            self._pending_dirty = True
+            return
+        self._dirty = True
+        if parser_kick is not None:
+            parser_kick()
+
+    def lock(self) -> bool:
+        if self._locked:
+            return False
+        self._locked = True
+        return True
+
+    def unlock(self, parser_kick=None) -> None:
+        self._locked = False
+        if self._pending_dirty:
+            self._pending_dirty = False
+            self.markDirty(parser_kick)
+
+    def isDirty(self) -> bool:
+        return self._dirty
+
+    def isLocked(self) -> bool:
+        return self._locked
+
+    def refreshDeviceMeta(self) -> None:
+        """默认空实现，子类覆盖"""
+        self._dirty = False
+
+    # ---- 原有方法 ----
 
     def to_device_info(self) -> DeviceInfo:
         device_type = "unknown"
