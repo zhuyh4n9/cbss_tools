@@ -29,7 +29,6 @@ def _load_dependencies(prefix):
     device_monitor_module = importlib.import_module(f"{prefix}.device_monitor")
     auth_module = importlib.import_module(f"{prefix}.auth_manager")
     prompt_module = importlib.import_module(f"{prefix}.prompt_manager")
-    build_options_module = importlib.import_module(f"{prefix}.build_options")
     diaglog_module = importlib.import_module(f"{prefix}.diaglog")
     return (
         config_module.ConfigManager,
@@ -40,7 +39,6 @@ def _load_dependencies(prefix):
         device_monitor_module.DeviceMonitor,
         auth_module.AuthenticationManager,
         prompt_module.PromptManager,
-        build_options_module.SIMULATED_DEVICE_STATUS_OPTIONS,
         diaglog_module.LogLevelDialog,
         diaglog_module.LogViewDialog,
         diaglog_module.AuthenticatorOperationDialog,
@@ -63,7 +61,6 @@ def _load_dependencies(prefix):
     DeviceMonitor,
     AuthenticationManager,
     PromptManager,
-    SIMULATED_DEVICE_STATUS_OPTIONS,
     LogLevelDialog,
     LogViewDialog,
     AuthenticatorOperationDialog,
@@ -304,13 +301,6 @@ class AuthenticatorToolGUI:
         self.refresh_button.pack(side=tk.LEFT, padx=(0,5))
         self.activate_all_button = ttk.Button(button_frame, text=self.prompt_mgr.get('UI.activate_all_btn'), command=self.authenticate_all_devices)
         self.activate_all_button.pack(side=tk.LEFT)
-        if self.auth_manager.is_simulated_device_enabled():
-            self.add_simulated_device_button = ttk.Button(
-                button_frame,
-                text=self.prompt_mgr.get('UI.add_simulated_device_btn'),
-                command=self.show_add_simulated_device_dialog
-            )
-            self.add_simulated_device_button.pack(side=tk.LEFT, padx=(5, 0))
         device_columns = (
             self.prompt_mgr.get('DeviceTable.col_serial'),
             self.prompt_mgr.get('DeviceTable.col_uuid'),
@@ -744,8 +734,6 @@ class AuthenticatorToolGUI:
     def update_device_display(self, devices: List[DeviceInfo]):
         """更新设备显示"""
         all_devices = list(devices or [])
-        if self.auth_manager.is_simulated_device_enabled():
-            all_devices.extend(self.auth_manager.get_simulated_devices())
 
         logging.debug(f"Updating device display with {len(all_devices)} devices")
         show_na_devices = self.config_manager.getboolean('UI', 'show_na_devices', False)
@@ -1468,43 +1456,6 @@ class AuthenticatorToolGUI:
         """判断UUID是否已准备好"""
         value = (uuid_text or "").strip()
         return value not in ("", "-", "获取中...", "Checking...")
-
-    def show_add_simulated_device_dialog(self):
-        """显示添加模拟设备弹窗"""
-        if not self.auth_manager.is_simulated_device_enabled():
-            messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self.prompt_mgr.get('Errors.simulated_device_disabled'))
-            return
-
-        dialog = tk.Toplevel(self.root)
-        dialog.title(self.prompt_mgr.get('Dialogs.add_simulated_device_title'))
-        dialog.geometry("380x180")
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        ttk.Label(dialog, text=self.prompt_mgr.get('Dialogs.simulated_device_status_label'), font=('Arial', 10)).pack(pady=(20, 10))
-
-        status_var = tk.StringVar(value="Unauthorized")
-        status_combo = ttk.Combobox(
-            dialog,
-            textvariable=status_var,
-            values=list(SIMULATED_DEVICE_STATUS_OPTIONS),
-            state="readonly",
-            width=30
-        )
-        status_combo.pack(pady=5)
-
-        def on_confirm():
-            try:
-                status = status_var.get().strip()
-                self.auth_manager.add_simulated_device(status)
-                self.update_device_display(self.device_monitor.target_devices)
-                self.status_var.set(self.prompt_mgr.format('InfoMessages.simulated_device_added', status=status))
-                dialog.destroy()
-            except Exception as e:
-                messagebox.showerror(self.prompt_mgr.get('Common.error_title'), self.prompt_mgr.format('Errors.unknown_error', msg=str(e)))
-
-        ttk.Button(dialog, text=self.prompt_mgr.get('Buttons.ok'), command=on_confirm).pack(pady=(15, 5))
-        ttk.Button(dialog, text=self.prompt_mgr.get('Buttons.cancel'), command=dialog.destroy).pack(pady=5)
 
     def show_create_simulated_cube_dialog(self):
         dialog = tk.Toplevel(self.root)

@@ -20,6 +20,9 @@ class DeviceClassificationStrategy:
         if known_cube:
             return ClassificationDecision(ready_device=None, should_add_cube=False, should_mark_unknown=False)
 
+        if base_device.is_simulation:
+            return ClassificationDecision(ready_device=base_device.clone())
+
         if base_device.getDetectionMethod().lower() == "adb" and not base_device.is_simulation:
             detected_device = ITargetDevice.CreateAdbDevice(
                 serial_number=serial,

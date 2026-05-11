@@ -12,7 +12,7 @@ from typing import Callable, Dict, List
 from .adb_manager import ADBManager, DeviceInfo
 from .device_classification_strategy import DeviceClassificationStrategy
 from .cube_manager import CubeManager
-from .target_device import TargetDeviceAbstract, UnknownAdbDevice, UnknownDevice
+from .target_device import TargetDeviceAbstract, UnknownAdbDevice, UnknownDevice, SimulatorDevice
 
 
 class DeviceParser:
@@ -91,6 +91,15 @@ class DeviceParser:
         detection_method = (device.detection_method or "Unknown").strip() or "Unknown"
         serial = str(device.serial)
         usb_port = str(device.usb_port or "")
+        if bool(device.is_simulation):
+            return SimulatorDevice(
+                detection_method=detection_method,
+                serial_number=serial,
+                is_simulation=True,
+                uuid=str(device.uuid or ""),
+                status=device.status or "Unknown",
+                usb_port=usb_port,
+            )
         if detection_method.lower() == "adb":
             return UnknownAdbDevice(
                 serial_number=serial,
