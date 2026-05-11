@@ -225,38 +225,18 @@ class AuthenticationManager:
         """检查是否正在执行激活"""
         return self._is_authenticating
 
-    def is_simulated_device_enabled(self) -> bool:
-        """是否启用模拟设备功能（编译/打包选项）"""
+    def is_simulation_enabled(self) -> bool:
+        """是否启用模拟功能（编译/打包选项）"""
         return ENABLE_SIMULATED_DEVICE
-
-    def is_simulated_device(self, serial: str) -> bool:
-        checker = getattr(self.device_monitor, "is_simulated_device", None)
-        if callable(checker):
-            return bool(checker(serial))
-        return False
-
-    def get_simulated_devices(self) -> List[DeviceInfo]:
-        getter = getattr(self.device_monitor, "get_simulated_devices", None)
-        if callable(getter):
-            return getter()
-        return []
-
-    def add_simulated_device(self, status: str) -> DeviceInfo:
-        if not self.is_simulated_device_enabled():
-            raise RuntimeError("模拟设备功能未启用")
-        adder = getattr(self.device_monitor, "add_simulated_device", None)
-        if not callable(adder):
-            raise RuntimeError("DeviceMonitor不支持添加模拟设备")
-        return adder(status)
 
     def _resolve_target_device(self, device_serial: str) -> ITargetDevice:
         """Resolve target device instance by serial for unified authentication flow."""
         serial = str(device_serial or "").strip()
-        simulation_getter = getattr(self.device_monitor, "get_simulated_device", None)
-        if callable(simulation_getter):
-            simulated = simulation_getter(serial)
-            if simulated is not None:
-                return simulated
+        target_getter = getattr(self.device_monitor, "get_target_device", None)
+        if callable(target_getter):
+            existing_target = target_getter(serial)
+            if existing_target is not None:
+                return existing_target
 
         device_info = None
         getter = getattr(self.device_monitor, "get_device_by_serial", None)
@@ -538,8 +518,8 @@ class AuthenticationManager:
             return {serial: cube.to_authenticator_info() for serial, cube in self._simulated_cubes.items()}
 
     def create_simulated_cube(self, expired_date: str, counter: int, private_key_path: str, cube_id: str, oem_id: str, persist_path: str) -> str:
-        if not self.is_simulated_device_enabled():
-            raise RuntimeError("模拟设备功能未启用")
+        if not self.is_simulation_enabled():
+            raise RuntimeError("模拟功能未启用")
         if not private_key_path or not os.path.exists(private_key_path):
             raise ValueError("P256私钥路径无效")
         if not persist_path:
@@ -560,8 +540,8 @@ class AuthenticationManager:
         return serial
 
     def load_simulated_cube(self, persist_path: str, private_key_path: str) -> str:
-        if not self.is_simulated_device_enabled():
-            raise RuntimeError("模拟设备功能未启用")
+        if not self.is_simulation_enabled():
+            raise RuntimeError("模拟功能未启用")
         if not persist_path or not os.path.exists(persist_path):
             raise ValueError("Cube持久化路径无效")
         if not private_key_path or not os.path.exists(private_key_path):

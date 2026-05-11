@@ -321,6 +321,8 @@ class AuthenticatorToolGUI:
         device_scrollbar_v.pack(side=tk.RIGHT, fill=tk.Y)
         device_scrollbar_h.pack(side=tk.BOTTOM, fill=tk.X)
         self.device_tree.bind('<Double-1>', self.on_device_double_click)
+        self.device_tree.bind('<Button-3>', self.on_device_right_click)
+        self.device_context_menu = tk.Menu(self.root, tearoff=0)
         self._update_auto_auth_ui_state()
 
     def create_status_bar(self):
@@ -959,7 +961,7 @@ class AuthenticatorToolGUI:
     def show_about(self):
         """显示关于信息"""
         company = self.config_manager.get('About', 'company', 'Autochips Inc')
-        version = self.config_manager.get('General', 'version', '3.1.7')
+        version = self.config_manager.get('General', 'version', '3.1.8')
         description = self.config_manager.get('About', 'description', self.prompt_mgr.get('Dialogs.about_desc'))
 
         about_text = f"""
@@ -1476,6 +1478,57 @@ class AuthenticatorToolGUI:
             else:
                 messagebox.showinfo(self.prompt_mgr.get('Common.info_title'), self.prompt_mgr.format('InfoMessages.device_already_activated', device=device_serial))
 
+    @staticmethod
+    def _extract_device_serial(item_values) -> str:
+        if not item_values:
+            return ""
+        serial_text = str(item_values[0])
+        return serial_text.split('serial:')[-1] if serial_text.startswith('serial:') else serial_text
+
+    def on_device_right_click(self, event):
+        item_id = self.device_tree.identify_row(event.y)
+        if not item_id:
+            return
+        self.device_tree.selection_set(item_id)
+        self.device_tree.focus(item_id)
+        values = self.device_tree.item(item_id).get('values', [])
+        device_serial = self._extract_device_serial(values)
+        if not device_serial:
+            return
+        target_device = self.device_monitor.get_target_device(device_serial)
+        if not target_device or target_device.getType() != "SimulatorDevice":
+            return
+
+        self.device_context_menu.delete(0, 'end')
+        self.device_context_menu.add_command(
+            label=self.prompt_mgr.get('MenuItems.remove_simulated_device'),
+            command=lambda s=device_serial: self.remove_simulated_device(s),
+        )
+        self.device_context_menu.tk_popup(event.x_root, event.y_root)
+        self.device_context_menu.grab_release()
+
+    def remove_simulated_device(self, device_serial: str):
+        target_device = self.device_monitor.get_target_device(device_serial)
+        if not target_device or target_device.getType() != "SimulatorDevice":
+            return False
+
+        if not messagebox.askyesno(
+            self.prompt_mgr.get('Common.confirm_title'),
+            self.prompt_mgr.format('Text.confirm_remove_simulated_device', serial=device_serial),
+        ):
+            return False
+
+        if not self.device_monitor.remove_simulated_device(device_serial):
+            messagebox.showerror(
+                self.prompt_mgr.get('Common.error_title'),
+                self.prompt_mgr.format('InfoMessages.simulated_device_remove_failed', serial=device_serial),
+            )
+            return False
+
+        self.device_monitor.update_devices()
+        self.status_var.set(self.prompt_mgr.format('InfoMessages.simulated_device_removed', serial=device_serial))
+        return True
+
     def _is_uuid_ready(self, uuid_text: str) -> bool:
         """判断UUID是否已准备好"""
         value = (uuid_text or "").strip()
@@ -1498,7 +1551,7 @@ class AuthenticatorToolGUI:
 
         def do_add():
             try:
-                simulated = self.device_monitor.add_simulated_device(status_var.get())
+                simulated = DeviceMonitor.create_simulated_device(self.device_monitor, status_var.get())
                 self.device_monitor.update_devices()
                 self.status_var.set(self.prompt_mgr.format('InfoMessages.simulated_device_added', status=simulated.status))
                 dialog.destroy()

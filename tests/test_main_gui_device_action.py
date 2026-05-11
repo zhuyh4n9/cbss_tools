@@ -20,8 +20,13 @@ class _FakePromptManager:
             "Text.confirm_clear_log": "确定要清空日志吗？",
             "Text.log_cleared": "日志已清空",
             "MenuItems.clear_logs": "清空日志",
+            "MenuItems.remove_simulated_device": "移除模拟设备",
             "InfoMessages.operation_success": "{name}执行成功",
             "InfoMessages.operation_fail": "{name}执行失败",
+            "InfoMessages.simulated_device_removed": "模拟设备已移除: {serial}",
+            "InfoMessages.simulated_device_remove_failed": "模拟设备移除失败: {serial}",
+            "Text.confirm_remove_simulated_device": "确定移除模拟设备 {serial} 吗？",
+            "Common.error_title": "错误",
         }
 
     def get(self, key):
@@ -57,6 +62,32 @@ class _FakeLogManager:
 
     def clear_logs(self):
         return self._clear_result
+
+
+class _FakeTargetDevice:
+    def __init__(self, device_type):
+        self._device_type = device_type
+
+    def getType(self):
+        return self._device_type
+
+
+class _FakeDeviceMonitor:
+    def __init__(self, device_type="SimulatorDevice", remove_result=True):
+        self._target = _FakeTargetDevice(device_type)
+        self._remove_result = remove_result
+        self.removed_serials = []
+        self.update_devices_calls = 0
+
+    def get_target_device(self, _serial):
+        return self._target
+
+    def remove_simulated_device(self, serial):
+        self.removed_serials.append(serial)
+        return self._remove_result
+
+    def update_devices(self):
+        self.update_devices_calls += 1
 
 
 class TestMainGuiDeviceAction(unittest.TestCase):
@@ -131,6 +162,37 @@ class TestMainGuiDeviceAction(unittest.TestCase):
         self.assertEqual(gui.status_var.value, "")
         mock_showinfo.assert_not_called()
         mock_showerror.assert_not_called()
+
+    def test_remove_simulated_device_success(self):
+        gui = self.gui_class.__new__(self.gui_class)
+        gui.prompt_mgr = _FakePromptManager()
+        gui.status_var = _FakeStatusVar()
+        gui.device_monitor = _FakeDeviceMonitor(device_type="SimulatorDevice", remove_result=True)
+        messagebox_module = self.gui_class.remove_simulated_device.__globals__["messagebox"]
+
+        with mock.patch.object(messagebox_module, "askyesno", return_value=True, create=True), \
+             mock.patch.object(messagebox_module, "showerror", create=True) as mock_showerror:
+            removed = gui.remove_simulated_device("SIM-0001")
+
+        self.assertTrue(removed)
+        self.assertEqual(gui.device_monitor.removed_serials, ["SIM-0001"])
+        self.assertEqual(gui.device_monitor.update_devices_calls, 1)
+        self.assertEqual(gui.status_var.value, "模拟设备已移除: SIM-0001")
+        mock_showerror.assert_not_called()
+
+    def test_remove_simulated_device_rejects_non_simulator(self):
+        gui = self.gui_class.__new__(self.gui_class)
+        gui.prompt_mgr = _FakePromptManager()
+        gui.status_var = _FakeStatusVar()
+        gui.device_monitor = _FakeDeviceMonitor(device_type="AC8267Device", remove_result=True)
+        messagebox_module = self.gui_class.remove_simulated_device.__globals__["messagebox"]
+
+        with mock.patch.object(messagebox_module, "askyesno", create=True) as mock_askyesno:
+            removed = gui.remove_simulated_device("DEV-0001")
+
+        self.assertFalse(removed)
+        self.assertEqual(gui.device_monitor.removed_serials, [])
+        mock_askyesno.assert_not_called()
 
 
 if __name__ == "__main__":

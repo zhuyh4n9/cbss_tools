@@ -70,6 +70,9 @@ class _FakeDeviceMonitor:
     def get_simulated_device(self, serial: str):
         return self._simulated_objects.get(str(serial or ""))
 
+    def get_target_device(self, serial: str):
+        return self._simulated_objects.get(str(serial or ""))
+
     def get_device_by_serial(self, serial: str):
         return self._devices.get(serial)
 
@@ -240,7 +243,7 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
 
         with patch("src.auth_manager.ENABLE_SIMULATED_DEVICE", True):
             manager = AuthenticationManager(adb_manager=fake_adb_manager, device_monitor=fake_monitor)
-            simulated = manager.add_simulated_device("Unauthorized")
+            simulated = fake_monitor.add_simulated_device("Unauthorized")
 
             self.assertTrue(fake_monitor.is_simulated_device(simulated.serial))
             self.assertEqual(len(fake_monitor.get_simulated_devices()), 1)
@@ -251,7 +254,7 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
             self.assertIn("authenticator_sign", events)
             self.assertNotIn("get_device_uuid", events)
             self.assertNotIn("verify_device_state", events)
-            self.assertEqual(manager.get_simulated_devices()[0].status, "Authorized")
+            self.assertEqual(fake_monitor.get_simulated_devices()[0].status, "Authorized")
 
 
 if __name__ == "__main__":

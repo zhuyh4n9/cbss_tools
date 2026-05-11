@@ -1,5 +1,20 @@
 # CBSS工具更新日志
 
+## v3.1.8 (2026-05-11)
+
+### 问题修复
+1. **Simulator Device 与 Real Device 在授权流程中统一抽象处理**
+   - `AuthenticationManager` 移除模拟目标设备专用入口，统一通过 `ITargetDevice` 解析与授权
+   - 激活流程不再对模拟设备做单独分支处理
+
+2. **模拟设备创建职责收敛到 DeviceMonitor 静态接口**
+   - 新增 `DeviceMonitor.create_simulated_device(...)` 静态入口，由 Main UI 调用
+   - `DeviceMonitor` 内部统一管理模拟设备新增、移除与状态刷新
+
+3. **补充模拟设备右键移除能力（仅 UI 区分）**
+   - 设备列表新增右键菜单，仅当 `ITargetDevice.getType()=="SimulatorDevice"` 时显示“移除模拟设备”
+   - 支持移除确认、移除失败提示与状态栏反馈
+
 ## v3.1.7 (2026-05-11)
 
 ### 问题修复

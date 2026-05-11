@@ -139,6 +139,29 @@ class DeviceMonitor:
     def is_simulated_device_enabled(self) -> bool:
         return ENABLE_SIMULATED_DEVICE
 
+    @staticmethod
+    def create_simulated_target_device(status: str, serial_number: str = "") -> SimulatorDevice:
+        status_input = (status or "").strip().lower()
+        status_map = {item.lower(): item for item in SIMULATED_DEVICE_STATUS_OPTIONS}
+        normalized_status = status_map.get(status_input, "Unauthorized")
+        if status_input and status_input not in status_map:
+            logging.warning("收到未知模拟设备状态，已回退为Unauthorized: %s", status)
+
+        serial = (serial_number or "").strip() or "SIM-0000"
+        device = ITargetDevice.CreateSimulation(
+            status=normalized_status,
+            serial_number=serial,
+        )
+        if not isinstance(device, SimulatorDevice):
+            raise RuntimeError("模拟设备创建失败")
+        return device
+
+    @staticmethod
+    def create_simulated_device(monitor: "DeviceMonitor", status: str) -> DeviceInfo:
+        if monitor is None:
+            raise ValueError("monitor cannot be None")
+        return monitor.add_simulated_device(status)
+
     def is_simulated_device(self, serial: str) -> bool:
         serial = str(serial or "")
         with self._simulated_lock:
@@ -157,21 +180,10 @@ class DeviceMonitor:
         if not self.is_simulated_device_enabled():
             raise RuntimeError("模拟设备功能未启用")
 
-        status_input = (status or "").strip().lower()
-        status_map = {item.lower(): item for item in SIMULATED_DEVICE_STATUS_OPTIONS}
-        normalized_status = status_map.get(status_input, "Unauthorized")
-        if status_input and status_input not in status_map:
-            logging.warning("收到未知模拟设备状态，已回退为Unauthorized: %s", status)
-
         with self._simulated_lock:
             self._simulated_counter += 1
             serial = f"SIM-{self._simulated_counter:04d}"
-            device = ITargetDevice.CreateSimulation(
-                status=normalized_status,
-                serial_number=serial,
-            )
-            if not isinstance(device, SimulatorDevice):
-                raise RuntimeError("模拟设备创建失败")
+            device = self.create_simulated_target_device(status=status, serial_number=serial)
             self._simulated_devices[serial] = device
         logging.info(
             "已添加模拟设备: serial=%s, status=%s, uuid_ready=%s",
@@ -180,6 +192,34 @@ class DeviceMonitor:
             bool(device.getUuid()),
         )
         return device.to_device_info()
+
+    def remove_simulated_device(self, serial: str) -> bool:
+        serial = str(serial or "").strip()
+        if not serial:
+            return False
+
+        with self._simulated_lock:
+            removed = self._simulated_devices.pop(serial, None)
+        if not removed:
+            return False
+
+        logging.info("已移除模拟设备: serial=%s", serial)
+        self._update_device_info()
+        return True
+
+    def get_target_device(self, serial: str):
+        serial = str(serial or "").strip()
+        if not serial:
+            return None
+        with self._simulated_lock:
+            simulated = self._simulated_devices.get(serial)
+            if simulated:
+                return simulated.clone()
+
+        getter = getattr(self.device_parser, "get_target_device", None)
+        if callable(getter):
+            return getter(serial)
+        return None
 
     def remove_callback(self, event_type: str, callback: Callable):
         """移除回调函数"""
