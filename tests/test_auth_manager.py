@@ -52,7 +52,6 @@ class _FakeDeviceMonitor:
         simulated = ITargetDevice.CreateSimulation(
             status=status,
             serial_number=serial,
-            uuid=f"SIM-UUID-{self._simulated_counter:04d}",
         )
         self._simulated_objects[serial] = simulated
         self._devices[serial] = simulated.to_device_info()

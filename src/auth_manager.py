@@ -262,7 +262,7 @@ class AuthenticationManager:
         getter = getattr(self.device_monitor, "get_device_by_serial", None)
         if callable(getter):
             device_info = getter(serial)
-        if device_info and bool(device_info.is_simulation):
+        if device_info and device_info.is_simulation:
             return ITargetDevice.CreateSimulation(
                 status=device_info.status,
                 serial_number=serial,

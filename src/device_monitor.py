@@ -161,7 +161,7 @@ class DeviceMonitor:
         status_map = {item.lower(): item for item in SIMULATED_DEVICE_STATUS_OPTIONS}
         normalized_status = status_map.get(status_input, "Unauthorized")
         if status_input and status_input not in status_map:
-            logging.warning(f"收到未知模拟设备状态，已回退为Unauthorized: {status}")
+            logging.warning("收到未知模拟设备状态，已回退为Unauthorized: %s", status)
 
         with self._simulated_lock:
             self._simulated_counter += 1
