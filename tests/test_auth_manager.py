@@ -24,6 +24,8 @@ class _FakeDeviceMonitor:
         self.refresh_all_cube_calls = 0
         self.refresh_device_calls = []
         self.refresh_all_device_calls = 0
+        self.device_sources = []
+        self._devices = {}
 
     def refresh_all_cube(self):
         self.refresh_all_cube_calls += 1
@@ -37,6 +39,15 @@ class _FakeDeviceMonitor:
 
     def get_authenticator_by_serial(self, serial: str):
         return self.authenticators.get(serial)
+
+    def register_device_source(self, source):
+        self.device_sources.append(source)
+
+    def get_device_by_serial(self, serial: str):
+        return self._devices.get(serial)
+
+    def get_ready_devices(self):
+        return list(self._devices.values())
 
 
 class _FailingRefreshDeviceMonitor(_FakeDeviceMonitor):
@@ -194,6 +205,27 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
             manager._activate_worker_loop()
 
         self.assertTrue(manager.is_device_queued_for_auto_activation(serial))
+
+    def test_simulated_device_source_and_auth_flow(self):
+        events = []
+        fake_monitor = _FakeDeviceMonitor(events=events)
+        fake_adb_manager = _FakeAdbManager(events=events)
+
+        with patch("src.auth_manager.ENABLE_SIMULATED_DEVICE", True):
+            manager = AuthenticationManager(adb_manager=fake_adb_manager, device_monitor=fake_monitor)
+            simulated = manager.add_simulated_device("Unauthorized")
+
+            self.assertEqual(len(fake_monitor.device_sources), 1)
+            polled_devices = fake_monitor.device_sources[0].poll_devices()
+            self.assertEqual(polled_devices[0].serial, simulated.serial)
+            self.assertTrue(polled_devices[0].is_simulation)
+
+            result = manager._perform_authentication(simulated.serial, "CUBE-001")
+
+            self.assertTrue(result["success"])
+            self.assertNotIn("get_device_uuid", events)
+            self.assertNotIn("verify_device_state", events)
+            self.assertEqual(manager.get_simulated_devices()[0].status, "Authorized")
 
 
 if __name__ == "__main__":
