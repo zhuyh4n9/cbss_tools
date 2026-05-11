@@ -788,10 +788,10 @@ pause
 
     def _create_release_scripts(self, release_dir):
         """创建最终版本脚本"""
-        launcher_script = '''@echo off
+        launcher_script = f'''@echo off
 title TheCube - AC8267授权工具
 echo TheCube - AC8267授权工具...
-    echo 版本：v3.1.1
+    echo 版本：v{self.version}
 echo.
 TheCube.exe
 if errorlevel 1 (

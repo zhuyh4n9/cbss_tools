@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
@@ -125,24 +126,25 @@ class TestSimulateCube(unittest.TestCase):
                     )
                 )
 
-            manager = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=_FakeDeviceMonitor())
-            serial = manager.create_simulated_cube(
-                expired_date="2099-12-31",
-                counter=3,
-                private_key_path=key_path,
-                cube_id="CUBE-2",
-                oem_id="OEM-B",
-                persist_path=persist_path,
-            )
-            self.assertIn(serial, manager.get_available_authenticators())
-            self.assertTrue(manager.perform_cube_operation("activate", serial, "deadbeef").success)
+            with patch('src.auth_manager.ENABLE_SIMULATED_DEVICE', True):
+                manager = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=_FakeDeviceMonitor())
+                serial = manager.create_simulated_cube(
+                    expired_date="2099-12-31",
+                    counter=3,
+                    private_key_path=key_path,
+                    cube_id="CUBE-2",
+                    oem_id="OEM-B",
+                    persist_path=persist_path,
+                )
+                self.assertIn(serial, manager.get_available_authenticators())
+                self.assertTrue(manager.perform_cube_operation("activate", serial, "deadbeef").success)
 
-            result = manager._perform_authentication("DEV-001", serial)
-            self.assertTrue(result["success"])
+                result = manager._perform_authentication("DEV-001", serial)
+                self.assertTrue(result["success"])
 
-            manager2 = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=_FakeDeviceMonitor())
-            loaded_serial = manager2.load_simulated_cube(persist_path=persist_path, private_key_path=key_path)
-            self.assertIn(loaded_serial, manager2.get_simulated_cube_infos())
+                manager2 = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=_FakeDeviceMonitor())
+                loaded_serial = manager2.load_simulated_cube(persist_path=persist_path, private_key_path=key_path)
+                self.assertIn(loaded_serial, manager2.get_simulated_cube_infos())
 
 
 if __name__ == "__main__":

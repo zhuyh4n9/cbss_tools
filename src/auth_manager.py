@@ -601,43 +601,52 @@ class AuthenticationManager:
     def get_available_authenticators(self) -> List[str]:
         """获取可用的激活盒子列表"""
         serials = set(self.device_monitor.authenticators.keys())
-        serials.update(self._simulated_cubes.keys())
+        with self._simulated_lock:
+            serials.update(self._simulated_cubes.keys())
         return sorted(serials)
 
     def is_simulated_cube(self, serial: str) -> bool:
-        return str(serial or "") in self._simulated_cubes
+        with self._simulated_lock:
+            return str(serial or "") in self._simulated_cubes
 
     def get_simulated_cube_infos(self) -> Dict[str, AuthenticatorInfo]:
-        return {serial: cube.to_authenticator_info() for serial, cube in self._simulated_cubes.items()}
+        with self._simulated_lock:
+            return {serial: cube.to_authenticator_info() for serial, cube in self._simulated_cubes.items()}
 
     def create_simulated_cube(self, expired_date: str, counter: int, private_key_path: str, cube_id: str, oem_id: str, persist_path: str) -> str:
+        if not self.is_simulated_device_enabled():
+            raise RuntimeError("模拟设备功能未启用")
         if not private_key_path or not os.path.exists(private_key_path):
             raise ValueError("P256私钥路径无效")
         if not persist_path:
             raise ValueError("持久化路径不能为空")
-        self._simulated_cube_counter += 1
-        serial = f"SIM-CUBE-{self._simulated_cube_counter:04d}"
-        config = SimulateCubeConfig(
-            serial=serial,
-            cube_id=str(cube_id or serial),
-            oem_id=str(oem_id or ""),
-            expired_date=str(expired_date or ""),
-            counter=max(int(counter), 0),
-            private_key_path=str(private_key_path),
-            persist_path=str(persist_path),
-        )
-        self._simulated_cubes[serial] = SimulateCube.create(config)
+        with self._simulated_lock:
+            self._simulated_cube_counter += 1
+            serial = f"SIM-CUBE-{self._simulated_cube_counter:04d}"
+            config_obj = SimulateCubeConfig(
+                serial=serial,
+                cube_id=str(cube_id or serial),
+                oem_id=str(oem_id or ""),
+                expired_date=str(expired_date or ""),
+                counter=max(int(counter), 0),
+                private_key_path=str(private_key_path),
+                persist_path=str(persist_path),
+            )
+            self._simulated_cubes[serial] = SimulateCube.create(config_obj)
         return serial
 
     def load_simulated_cube(self, persist_path: str, private_key_path: str) -> str:
+        if not self.is_simulated_device_enabled():
+            raise RuntimeError("模拟设备功能未启用")
         if not persist_path or not os.path.exists(persist_path):
             raise ValueError("Cube持久化路径无效")
         if not private_key_path or not os.path.exists(private_key_path):
             raise ValueError("P256私钥路径无效")
-        self._simulated_cube_counter += 1
-        serial = f"SIM-CUBE-{self._simulated_cube_counter:04d}"
-        cube = SimulateCube.load(persist_path=persist_path, private_key_path=private_key_path, serial_override=serial)
-        self._simulated_cubes[serial] = cube
+        with self._simulated_lock:
+            self._simulated_cube_counter += 1
+            serial = f"SIM-CUBE-{self._simulated_cube_counter:04d}"
+            cube = SimulateCube.load(persist_path=persist_path, private_key_path=private_key_path, serial_override=serial)
+            self._simulated_cubes[serial] = cube
         return serial
 
     def perform_cube_operation(self, operation: str, serial: str, payload: str):
@@ -654,8 +663,9 @@ class AuthenticationManager:
 
     def _resolve_cube(self, serial: str) -> ICube:
         serial = str(serial or "").strip()
-        if self.is_simulated_cube(serial):
-            return self._simulated_cubes[serial]
+        with self._simulated_lock:
+            if serial in self._simulated_cubes:
+                return self._simulated_cubes[serial]
         known_authenticators = getattr(self.device_monitor, "authenticators", {}) or {}
         if serial not in known_authenticators:
             raise ValueError(f"未找到Cube: {serial}")

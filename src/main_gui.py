@@ -189,9 +189,10 @@ class AuthenticatorToolGUI:
             command=self.toggle_auto_activation
         )
         tools_menu.add_separator()
-        tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.create_simulated_cube'), command=self.show_create_simulated_cube_dialog)
-        tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.load_simulated_cube'), command=self.show_load_simulated_cube_dialog)
-          # 新增：设备WiFi连接
+        if self.auth_manager.is_simulated_device_enabled():
+            tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.create_simulated_cube'), command=self.show_create_simulated_cube_dialog)
+            tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.load_simulated_cube'), command=self.show_load_simulated_cube_dialog)
+        # 新增：设备WiFi连接
         tools_menu.add_separator()
         tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.current_wifi'), command=self.view_current_wifi)
         tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.scan_and_connect_wifi'), command=self.scan_and_connect_wifi)
