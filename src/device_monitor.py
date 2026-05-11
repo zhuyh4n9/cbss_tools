@@ -163,7 +163,7 @@ class DeviceMonitor:
             return True
 
         for serial, new_device in new_index.items():
-            old_device = old_index.get(serial)
+            old_device = old_index[serial]
             if (
                 old_device.status != new_device.status or
                 old_device.usb_port != new_device.usb_port or
