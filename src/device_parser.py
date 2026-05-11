@@ -280,6 +280,12 @@ class DeviceParser:
         with self._lock:
             return [copy.deepcopy(self._ready_queue[s].to_device_info()) for s in self._order if s in self._ready_queue]
 
+    def get_target_device(self, serial: str):
+        serial = str(serial or "")
+        with self._lock:
+            device = self._ready_queue.get(serial) or self._await_queue.get(serial) or self._base_devices.get(serial)
+            return copy.deepcopy(device) if device else None
+
     def get_authenticator_serials(self) -> List[str]:
         return self.cube_manager.get_cube_serials()
 

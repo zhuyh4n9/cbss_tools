@@ -16,6 +16,7 @@ class CubeManager:
     def __init__(self, adb_manager: ADBManager, refresh_interval: int = 5):
         self.adb_manager = adb_manager
         self.refresh_interval = max(int(refresh_interval or 5), 1)
+        self._periodic_refresh_enabled = True
 
         self._cubes: Dict[str, AuthenticatorInfo] = {}
         self._pending_cubes = set()
@@ -94,6 +95,10 @@ class CubeManager:
                 self._refresh_queue.add(serial)
         self._wake_event.set()
 
+    def set_periodic_refresh_enabled(self, enabled: bool):
+        self._periodic_refresh_enabled = bool(enabled)
+        self._wake_event.set()
+
     def get_cube_serials(self):
         with self._lock:
             return list(self._cubes.keys())
@@ -149,13 +154,14 @@ class CubeManager:
                         time.sleep(0.2)
                     continue
 
-                now = time.time()
-                if now - last_periodic >= self.refresh_interval:
-                    with self._lock:
-                        periodic_serials = list(self._cubes.keys())
-                    for s in periodic_serials:
-                        self._refresh_one(s)
-                    last_periodic = now
+                if self._periodic_refresh_enabled:
+                    now = time.time()
+                    if now - last_periodic >= self.refresh_interval:
+                        with self._lock:
+                            periodic_serials = list(self._cubes.keys())
+                        for s in periodic_serials:
+                            self._refresh_one(s)
+                        last_periodic = now
 
                 self._wake_event.wait(timeout=0.5)
                 self._wake_event.clear()

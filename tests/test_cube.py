@@ -138,13 +138,51 @@ class TestSimulateCube(unittest.TestCase):
                 )
                 self.assertIn(serial, manager.get_available_authenticators())
                 self.assertTrue(manager.perform_cube_operation("activate", serial, "deadbeef").success)
+                self.assertEqual(manager.get_simulated_cube_infos()[serial].counter, 3)
 
                 result = manager._perform_authentication("DEV-001", serial)
                 self.assertTrue(result["success"])
+                self.assertEqual(manager.get_simulated_cube_infos()[serial].counter, 2)
 
                 manager2 = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=_FakeDeviceMonitor())
                 loaded_serial = manager2.load_simulated_cube(persist_path=persist_path, private_key_path=key_path)
                 self.assertIn(loaded_serial, manager2.get_simulated_cube_infos())
+
+    def test_auth_manager_respects_custom_serial_and_no_forced_sim_cube_prefix(self):
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        with tempfile.TemporaryDirectory() as tmpdir:
+            key_path = f"{tmpdir}/p256.pem"
+            persist_path = f"{tmpdir}/cube.json"
+            with open(key_path, "wb") as f:
+                f.write(
+                    private_key.private_bytes(
+                        encoding=serialization.Encoding.PEM,
+                        format=serialization.PrivateFormat.PKCS8,
+                        encryption_algorithm=serialization.NoEncryption(),
+                    )
+                )
+
+            with patch('src.auth_manager.ENABLE_SIMULATED_DEVICE', True):
+                manager = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=_FakeDeviceMonitor())
+                serial = manager.create_simulated_cube(
+                    expired_date="2099-12-31",
+                    counter=1,
+                    private_key_path=key_path,
+                    cube_id="CUBE-CUSTOM",
+                    oem_id="OEM-B",
+                    persist_path=persist_path,
+                    serial_id="CUSTOM-SERIAL-001",
+                )
+                self.assertEqual(serial, "CUSTOM-SERIAL-001")
+                self.assertIn(serial, manager.get_simulated_cube_infos())
+
+                manager2 = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=_FakeDeviceMonitor())
+                loaded_serial = manager2.load_simulated_cube(
+                    persist_path=persist_path,
+                    private_key_path=key_path,
+                    serial_id="",
+                )
+                self.assertEqual(loaded_serial, "CUSTOM-SERIAL-001")
 
 
 if __name__ == "__main__":

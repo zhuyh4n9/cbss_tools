@@ -76,6 +76,8 @@ def _load_dependencies(prefix):
 NETWORK_MONITOR_THREAD_JOIN_TIMEOUT = 0.1
 
 class AuthenticatorToolGUI:
+    _SIMULATOR_DEVICE_TYPE = "SimulatorDevice"
+
     def __init__(self):
         self.root = tk.Tk()
         # initialize prompt manager before UI
@@ -98,6 +100,31 @@ class AuthenticatorToolGUI:
 
         # 加载网络监控配置
         self.load_network_config()
+
+    def _ensure_dialog_on_main_screen(self, dialog):
+        """确保弹窗落在主窗口同一屏幕可见区域内"""
+        try:
+            self.root.update_idletasks()
+            dialog.update_idletasks()
+
+            root_x = self.root.winfo_rootx()
+            root_y = self.root.winfo_rooty()
+            root_w = max(self.root.winfo_width(), 1)
+            root_h = max(self.root.winfo_height(), 1)
+
+            dialog_w = max(dialog.winfo_width(), 1)
+            dialog_h = max(dialog.winfo_height(), 1)
+
+            x = root_x + (root_w - dialog_w) // 2
+            y = root_y + (root_h - dialog_h) // 2
+
+            screen_w = max(self.root.winfo_screenwidth(), 1)
+            screen_h = max(self.root.winfo_screenheight(), 1)
+            x = max(0, min(x, screen_w - dialog_w))
+            y = max(0, min(y, screen_h - dialog_h))
+            dialog.geometry(f"+{x}+{y}")
+        except Exception as e:
+            logging.debug(f"设置弹窗位置失败: {e}")
 
     def setup_managers(self):
         """初始化各种管理器"""
@@ -321,6 +348,8 @@ class AuthenticatorToolGUI:
         device_scrollbar_v.pack(side=tk.RIGHT, fill=tk.Y)
         device_scrollbar_h.pack(side=tk.BOTTOM, fill=tk.X)
         self.device_tree.bind('<Double-1>', self.on_device_double_click)
+        self.device_tree.bind('<Button-3>', self.on_device_right_click)
+        self.device_context_menu = tk.Menu(self.root, tearoff=0)
         self._update_auto_auth_ui_state()
 
     def create_status_bar(self):
@@ -635,6 +664,7 @@ class AuthenticatorToolGUI:
             dialog.geometry('700x500')
             dialog.transient(self.root)
             dialog.grab_set()
+            self._ensure_dialog_on_main_screen(dialog)
             text_frame = ttk.Frame(dialog)
             text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
             text_widget = tk.Text(text_frame, wrap=tk.WORD)
@@ -719,6 +749,9 @@ class AuthenticatorToolGUI:
         auto_done_text = self.prompt_mgr.get('DeviceTable.action_auto_completed')
         auto_anomaly_text = self.prompt_mgr.get('DeviceTable.action_auto_queue_anomaly')
         uuid_ready = self._is_uuid_ready(uuid_display)
+        blocked_getter = getattr(self.auth_manager, "is_device_activation_blocked", None)
+        if callable(blocked_getter) and blocked_getter(serial):
+            return auto_anomaly_text
 
         if auto_enabled:
             if self.auth_manager.is_device_auto_activation_completed(serial):
@@ -726,7 +759,7 @@ class AuthenticatorToolGUI:
             if status_lower == "unauthorized" and uuid_ready:
                 if self.auth_manager.is_device_queued_for_auto_activation(serial):
                     return auto_waiting_text
-                return auto_anomaly_text
+                return auto_waiting_text
             return manual_unavailable_text
 
         if status_lower == "unauthorized" and uuid_ready:
@@ -751,6 +784,9 @@ class AuthenticatorToolGUI:
                 continue
 
             status_text = (device.status or "").strip()
+            blocked_getter = getattr(self.auth_manager, "is_device_activation_blocked", None)
+            if callable(blocked_getter) and blocked_getter(str(device.serial)):
+                status_text = "AuthorizationFailure"
             if not status_text:
                 status_text = "Checking..."
             status_lower = status_text.lower()
@@ -950,6 +986,7 @@ class AuthenticatorToolGUI:
         dialog.geometry("600x500")
         dialog.transient(self.root)
         dialog.grab_set()
+        self._ensure_dialog_on_main_screen(dialog)
         text_widget = tk.Text(dialog, wrap=tk.WORD, padx=10, pady=10)
         text_widget.pack(fill=tk.BOTH, expand=True)
         text_widget.insert('1.0', help_text)
@@ -959,7 +996,7 @@ class AuthenticatorToolGUI:
     def show_about(self):
         """显示关于信息"""
         company = self.config_manager.get('About', 'company', 'Autochips Inc')
-        version = self.config_manager.get('General', 'version', '3.1.7')
+        version = self.config_manager.get('General', 'version', '3.1.9')
         description = self.config_manager.get('About', 'description', self.prompt_mgr.get('Dialogs.about_desc'))
 
         about_text = f"""
@@ -980,6 +1017,7 @@ class AuthenticatorToolGUI:
         dialog.title(self.prompt_mgr.get('Dialogs.changelog_title'))
         dialog.geometry("800x600")
         dialog.transient(self.root)
+        self._ensure_dialog_on_main_screen(dialog)
 
         # 创建文本显示区域
         text_frame = ttk.Frame(dialog, padding=10)
@@ -1053,6 +1091,7 @@ class AuthenticatorToolGUI:
         device_dialog.geometry("400x200")
         device_dialog.transient(self.root)
         device_dialog.grab_set()
+        self._ensure_dialog_on_main_screen(device_dialog)
 
         ttk.Label(device_dialog, text=self.prompt_mgr.get('Dialogs.device_list_label'), font=('Arial', 10)).pack(pady=20)
 
@@ -1078,6 +1117,7 @@ class AuthenticatorToolGUI:
         dialog.geometry("500x400")
         dialog.transient(self.root)
         dialog.grab_set()
+        self._ensure_dialog_on_main_screen(dialog)
 
         # 状态标签
         status_label = ttk.Label(dialog, text=self.prompt_mgr.get('WifiStatus.fetching', fallback='正在获取WiFi状态...'), foreground="blue")
@@ -1210,6 +1250,7 @@ class AuthenticatorToolGUI:
         device_dialog.geometry("400x200")
         device_dialog.transient(self.root)
         device_dialog.grab_set()
+        self._ensure_dialog_on_main_screen(device_dialog)
 
         ttk.Label(device_dialog, text=self.prompt_mgr.get('Dialogs.device_list_label'), font=('Arial', 10)).pack(pady=20)
 
@@ -1472,9 +1513,63 @@ class AuthenticatorToolGUI:
                 if not self._is_uuid_ready(uuid_text):
                     messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), f"设备 {device_serial} 的UUID尚未获取完成，暂不允许激活")
                     return
+                if self.auth_manager.is_device_activation_blocked(device_serial):
+                    messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self.prompt_mgr.get('Errors.activation_blocked_replug_required'))
+                    return
                 self.authenticate_device(device_serial)
             else:
                 messagebox.showinfo(self.prompt_mgr.get('Common.info_title'), self.prompt_mgr.format('InfoMessages.device_already_activated', device=device_serial))
+
+    @staticmethod
+    def _extract_device_serial(item_values) -> str:
+        if not item_values:
+            return ""
+        serial_text = str(item_values[0])
+        return serial_text.split('serial:')[-1] if serial_text.startswith('serial:') else serial_text
+
+    def on_device_right_click(self, event):
+        item_id = self.device_tree.identify_row(event.y)
+        if not item_id:
+            return
+        self.device_tree.selection_set(item_id)
+        self.device_tree.focus(item_id)
+        values = self.device_tree.item(item_id).get('values', [])
+        device_serial = self._extract_device_serial(values)
+        if not device_serial:
+            return
+        target_device = self.device_monitor.get_target_device(device_serial)
+        if not target_device or target_device.getType() != self._SIMULATOR_DEVICE_TYPE:
+            return
+
+        self.device_context_menu.delete(0, 'end')
+        self.device_context_menu.add_command(
+            label=self.prompt_mgr.get('MenuItems.remove_simulated_device'),
+            command=lambda s=device_serial: self.remove_simulated_device(s),
+        )
+        self.device_context_menu.tk_popup(event.x_root, event.y_root)
+        self.device_context_menu.grab_release()
+
+    def remove_simulated_device(self, device_serial: str):
+        target_device = self.device_monitor.get_target_device(device_serial)
+        if not target_device or target_device.getType() != self._SIMULATOR_DEVICE_TYPE:
+            return False
+
+        if not messagebox.askyesno(
+            self.prompt_mgr.get('Common.confirm_title'),
+            self.prompt_mgr.format('Text.confirm_remove_simulated_device', serial=device_serial),
+        ):
+            return False
+
+        if not self.device_monitor.remove_simulated_device(device_serial):
+            messagebox.showerror(
+                self.prompt_mgr.get('Common.error_title'),
+                self.prompt_mgr.format('InfoMessages.simulated_device_remove_failed', serial=device_serial),
+            )
+            return False
+
+        self.device_monitor.update_devices()
+        self.status_var.set(self.prompt_mgr.format('InfoMessages.simulated_device_removed', serial=device_serial))
+        return True
 
     def _is_uuid_ready(self, uuid_text: str) -> bool:
         """判断UUID是否已准备好"""
@@ -1484,21 +1579,48 @@ class AuthenticatorToolGUI:
     def show_add_simulated_device_dialog(self):
         dialog = tk.Toplevel(self.root)
         dialog.title(self.prompt_mgr.get('Dialogs.add_simulated_device_title'))
-        dialog.geometry("360x180")
+        dialog.geometry("420x260")
         dialog.transient(self.root)
         dialog.grab_set()
+        self._ensure_dialog_on_main_screen(dialog)
 
         frame = ttk.Frame(dialog, padding=12)
         frame.pack(fill=tk.BOTH, expand=True)
 
         ttk.Label(frame, text=self.prompt_mgr.get('Dialogs.simulated_device_status_label')).pack(anchor='w', pady=(0, 8))
         status_var = tk.StringVar(value="Unauthorized")
-        status_box = ttk.Combobox(frame, textvariable=status_var, state="readonly", values=["Unauthorized", "Authorized", "Pirated"])
+        status_box = ttk.Combobox(
+            frame,
+            textvariable=status_var,
+            state="readonly",
+            values=["Unauthorized", "Authorized", "Pirated", "AuthorizationFailure"],
+        )
         status_box.pack(fill=tk.X, pady=(0, 12))
+
+        ttk.Label(frame, text=self.prompt_mgr.get('Dialogs.simulated_device_serial_label')).pack(anchor='w', pady=(0, 4))
+        serial_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=serial_var).pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame, text=self.prompt_mgr.get('Dialogs.simulated_device_uuid_label')).pack(anchor='w', pady=(0, 4))
+        uuid_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=uuid_var).pack(fill=tk.X, pady=(0, 8))
+
+        fail_on_activate_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            frame,
+            text=self.prompt_mgr.get('Dialogs.simulated_device_fail_on_activate_label'),
+            variable=fail_on_activate_var,
+        ).pack(anchor='w', pady=(0, 8))
 
         def do_add():
             try:
-                simulated = self.device_monitor.add_simulated_device(status_var.get())
+                simulated = DeviceMonitor.create_simulated_device(
+                    self.device_monitor,
+                    status=status_var.get(),
+                    serial_id=serial_var.get().strip(),
+                    uuid=uuid_var.get().strip(),
+                    fail_on_activate=bool(fail_on_activate_var.get()),
+                )
                 self.device_monitor.update_devices()
                 self.status_var.set(self.prompt_mgr.format('InfoMessages.simulated_device_added', status=simulated.status))
                 dialog.destroy()
@@ -1516,6 +1638,7 @@ class AuthenticatorToolGUI:
         dialog.geometry("520x390")
         dialog.transient(self.root)
         dialog.grab_set()
+        self._ensure_dialog_on_main_screen(dialog)
 
         fields = ttk.Frame(dialog, padding=12)
         fields.pack(fill=tk.BOTH, expand=True)
@@ -1523,6 +1646,7 @@ class AuthenticatorToolGUI:
         expire_var = tk.StringVar()
         counter_var = tk.StringVar(value="100")
         key_path_var = tk.StringVar()
+        serial_var = tk.StringVar()
         cube_id_var = tk.StringVar()
         oem_id_var = tk.StringVar()
         persist_path_var = tk.StringVar()
@@ -1534,13 +1658,15 @@ class AuthenticatorToolGUI:
         ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_private_key_label')).grid(row=2, column=0, sticky='w', pady=4)
         ttk.Entry(fields, textvariable=key_path_var, width=45).grid(row=2, column=1, sticky='we', pady=4)
         ttk.Button(fields, text=self.prompt_mgr.get('Buttons.choose_file'), command=lambda: key_path_var.set(filedialog.askopenfilename() or key_path_var.get())).grid(row=2, column=2, padx=(5, 0))
-        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_id_label')).grid(row=3, column=0, sticky='w', pady=4)
-        ttk.Entry(fields, textvariable=cube_id_var, width=45).grid(row=3, column=1, sticky='we', pady=4)
-        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_oem_id_label')).grid(row=4, column=0, sticky='w', pady=4)
-        ttk.Entry(fields, textvariable=oem_id_var, width=45).grid(row=4, column=1, sticky='we', pady=4)
-        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_persist_path_label')).grid(row=5, column=0, sticky='w', pady=4)
-        ttk.Entry(fields, textvariable=persist_path_var, width=45).grid(row=5, column=1, sticky='we', pady=4)
-        ttk.Button(fields, text=self.prompt_mgr.get('Buttons.choose_file'), command=lambda: persist_path_var.set(filedialog.asksaveasfilename(defaultextension=".json") or persist_path_var.get())).grid(row=5, column=2, padx=(5, 0))
+        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_serial_label')).grid(row=3, column=0, sticky='w', pady=4)
+        ttk.Entry(fields, textvariable=serial_var, width=45).grid(row=3, column=1, sticky='we', pady=4)
+        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_id_label')).grid(row=4, column=0, sticky='w', pady=4)
+        ttk.Entry(fields, textvariable=cube_id_var, width=45).grid(row=4, column=1, sticky='we', pady=4)
+        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_oem_id_label')).grid(row=5, column=0, sticky='w', pady=4)
+        ttk.Entry(fields, textvariable=oem_id_var, width=45).grid(row=5, column=1, sticky='we', pady=4)
+        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_persist_path_label')).grid(row=6, column=0, sticky='w', pady=4)
+        ttk.Entry(fields, textvariable=persist_path_var, width=45).grid(row=6, column=1, sticky='we', pady=4)
+        ttk.Button(fields, text=self.prompt_mgr.get('Buttons.choose_file'), command=lambda: persist_path_var.set(filedialog.asksaveasfilename(defaultextension=".json") or persist_path_var.get())).grid(row=6, column=2, padx=(5, 0))
         fields.columnconfigure(1, weight=1)
 
         def on_create():
@@ -1549,6 +1675,7 @@ class AuthenticatorToolGUI:
                     expired_date=expire_var.get().strip(),
                     counter=int(counter_var.get().strip() or "0"),
                     private_key_path=key_path_var.get().strip(),
+                    serial_id=serial_var.get().strip(),
                     cube_id=cube_id_var.get().strip(),
                     oem_id=oem_id_var.get().strip(),
                     persist_path=persist_path_var.get().strip(),
@@ -1570,12 +1697,14 @@ class AuthenticatorToolGUI:
         dialog.geometry("520x220")
         dialog.transient(self.root)
         dialog.grab_set()
+        self._ensure_dialog_on_main_screen(dialog)
 
         fields = ttk.Frame(dialog, padding=12)
         fields.pack(fill=tk.BOTH, expand=True)
 
         cube_path_var = tk.StringVar()
         key_path_var = tk.StringVar()
+        serial_var = tk.StringVar()
 
         ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_file_path_label')).grid(row=0, column=0, sticky='w', pady=6)
         ttk.Entry(fields, textvariable=cube_path_var, width=45).grid(row=0, column=1, sticky='we', pady=6)
@@ -1583,6 +1712,8 @@ class AuthenticatorToolGUI:
         ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_private_key_label')).grid(row=1, column=0, sticky='w', pady=6)
         ttk.Entry(fields, textvariable=key_path_var, width=45).grid(row=1, column=1, sticky='we', pady=6)
         ttk.Button(fields, text=self.prompt_mgr.get('Buttons.choose_file'), command=lambda: key_path_var.set(filedialog.askopenfilename() or key_path_var.get())).grid(row=1, column=2, padx=(5, 0))
+        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.sim_cube_serial_label')).grid(row=2, column=0, sticky='w', pady=6)
+        ttk.Entry(fields, textvariable=serial_var, width=45).grid(row=2, column=1, sticky='we', pady=6)
         fields.columnconfigure(1, weight=1)
 
         def on_load():
@@ -1590,6 +1721,7 @@ class AuthenticatorToolGUI:
                 serial = self.auth_manager.load_simulated_cube(
                     persist_path=cube_path_var.get().strip(),
                     private_key_path=key_path_var.get().strip(),
+                    serial_id=serial_var.get().strip(),
                 )
                 dialog.destroy()
                 self.status_var.set(self.prompt_mgr.format('InfoMessages.simulated_cube_loaded', serial=serial))
@@ -1625,6 +1757,9 @@ class AuthenticatorToolGUI:
         uuid_text = self._get_uuid_by_serial_from_tree(device_serial)
         if not self._is_uuid_ready(uuid_text):
             messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), f"设备 {device_serial} 的UUID尚未获取完成，暂不允许激活")
+            return
+        if self.auth_manager.is_device_activation_blocked(device_serial):
+            messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self.prompt_mgr.get('Errors.activation_blocked_replug_required'))
             return
 
         # 获取可用的激活盒子
@@ -1761,6 +1896,7 @@ class AuthenticatorToolGUI:
         if device_serial:
             self.device_monitor.refresh_device(device_serial)
             self.device_monitor.refresh_all_cube()
+            self.update_authenticator_display(self.device_monitor.authenticators)
 
     def on_batch_authentication_complete(self, result: dict, progress_dialog):
         """批量激活完成处理"""
@@ -1775,6 +1911,8 @@ class AuthenticatorToolGUI:
             messagebox.showerror(self.prompt_mgr.get('Common.fail_title'), result['message'])
         # 批量激活完成后刷新全部设备解析状态
         self.device_monitor.refresh_all_device()
+        self.device_monitor.refresh_all_cube()
+        self.update_authenticator_display(self.device_monitor.authenticators)
 
     def on_authentication_error(self, error_message: str, progress_dialog, device_serial: str = None):
         """激活错误处理"""
@@ -1787,6 +1925,7 @@ class AuthenticatorToolGUI:
         if device_serial:
             self.device_monitor.refresh_device(device_serial)
             self.device_monitor.refresh_all_cube()
+            self.update_authenticator_display(self.device_monitor.authenticators)
         else:
             self.device_monitor.refresh_all_device()
 

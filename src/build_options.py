@@ -16,5 +16,5 @@ def _env_flag_enabled(value: str) -> bool:
 ENABLE_SIMULATED_DEVICE = _env_flag_enabled(os.environ.get("CBSS_ENABLE_SIMULATED_DEVICE", "0"))
 
 # 模拟设备常量
-SIMULATED_DEVICE_STATUS_OPTIONS = ("Pirated", "Authorized", "Unauthorized")
+SIMULATED_DEVICE_STATUS_OPTIONS = ("Pirated", "Authorized", "Unauthorized", "AuthorizationFailure")
 SIMULATED_AUTHENTICATOR_SERIAL = "SIMULATED_AUTHENTICATOR"

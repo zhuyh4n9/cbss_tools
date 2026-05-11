@@ -27,6 +27,37 @@ class SimulateCubeConfig:
 
 
 class ICube(ABC):
+    @staticmethod
+    def CreateSimulation(
+        serial: str,
+        cube_id: str,
+        oem_id: str,
+        expired_date: str,
+        counter: int,
+        private_key_path: str,
+        persist_path: str,
+        authorized_device_num: int = 0,
+    ):
+        config = SimulateCubeConfig(
+            serial=str(serial or ""),
+            cube_id=str(cube_id or ""),
+            oem_id=str(oem_id or ""),
+            expired_date=str(expired_date or ""),
+            counter=max(int(counter or 0), 0),
+            private_key_path=str(private_key_path or ""),
+            persist_path=str(persist_path or ""),
+            authorized_device_num=max(int(authorized_device_num or 0), 0),
+        )
+        return SimulateCube.create(config)
+
+    @staticmethod
+    def LoadSimulation(persist_path: str, private_key_path: str, serial_override: str = ""):
+        return SimulateCube.load(
+            persist_path=str(persist_path or ""),
+            private_key_path=str(private_key_path or ""),
+            serial_override=str(serial_override or ""),
+        )
+
     @abstractmethod
     def get_serial(self) -> str:
         pass
@@ -124,10 +155,8 @@ class SimulateCube(ICube):
 
         try:
             key = self._read_private_key()
-            digest = hashes.Hash(hashes.SHA256())
-            digest.update(uuid_bytes)
-            hashed_uuid = digest.finalize()
-            der = key.sign(hashed_uuid, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
+            # uuid_bytes 在当前协议中即为 32 字节预哈希值，需按 Prehashed 直接签名，避免重复哈希。
+            der = key.sign(uuid_bytes, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
             r, s = decode_dss_signature(der)
             signature = (r.to_bytes(32, byteorder="big") + s.to_bytes(32, byteorder="big")).hex()
             self._config.counter -= 1
