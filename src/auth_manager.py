@@ -479,7 +479,6 @@ class AuthenticationManager:
                     'details': uuid_result.raw_output
                 }
             device_uuid = (uuid_result.result_data or "").strip()
-            target_device.setUuid(device_uuid)
 
             logging.info(f"获取到设备UUID: {device_uuid}")
 

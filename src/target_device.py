@@ -301,4 +301,4 @@ class UnknownDevice(TargetDeviceAbstract):
         )
 
     def fetch_state(self) -> CommandResult:
-        return CommandResult(success=False, status_code=1, result_data="Unknown", raw_output="Unknown")
+        return CommandResult(success=False, status_code=1, error_message="UnknownDevice state unavailable", raw_output="Unknown")
