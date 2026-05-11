@@ -11,6 +11,10 @@
    - `DeviceMonitor` 仅在设备连接状态发生变化时同步到 `DeviceParser`
    - `refresh_all_cube` 仅刷新 Cube 快照，不再触发 TargetDevice 重解析
 
+3. **修复 serial/UUID 字段空白污染问题**
+   - 设备探测时对 serial ID 做空格/tab trim
+   - 获取 UUID 成功后统一做空格/tab trim
+
 ## v3.1.4 (2026-05-09)
 
 ### 问题修复

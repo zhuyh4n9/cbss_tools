@@ -72,7 +72,7 @@ class ADBManager:
 
             # 构建完整的ADB命令
             if serial:
-                full_command = [self.adb_path, '-s', serial] + args
+                full_command = [self.adb_path, '-s', self._normalize_identifier(serial)] + args
             else:
                 full_command = [self.adb_path] + args
             
@@ -169,14 +169,11 @@ class ADBManager:
             for line in result.stdout.split('\n'):
                 line = line.strip()
                 if line and not line.startswith('List of devices'):
-                    __parts = line.split(' ')
-                    parts = []
-                    for part in __parts:
-                        part = part.strip()
-                        if part:
-                            parts.append(part)
+                    parts = line.split()
                     if len(parts) >= 2:
-                        serial = parts[0]
+                        serial = self._normalize_identifier(parts[0])
+                        if not serial:
+                            continue
                         usb_port = ""
                         for part in parts[1:]:
                             if part.startswith('usb:'):
@@ -193,7 +190,10 @@ class ADBManager:
         """获取设备UUID"""
         command = self.config.get_adb_command('device_uuid')
         logging.debug(f"Getting device UUID with command: {command} {serial}")
-        return self.execute_adb_command(command, serial)
+        result = self.execute_adb_command(command, self._normalize_identifier(serial))
+        if result.success and result.result_data:
+            result.result_data = self._normalize_identifier(result.result_data)
+        return result
 
     def get_device_state(self, serial: str) -> CommandResult:
         """获取设备激活状态"""
@@ -205,6 +205,10 @@ class ADBManager:
             result.result_data  = result.result_data.strip()
 
         return result
+
+    @staticmethod
+    def _normalize_identifier(value: str) -> str:
+        return str(value or "").strip(" \t\r\n")
 
     def activate_device(self, serial: str, sign_hex: str) -> CommandResult:
         """激活设备"""
