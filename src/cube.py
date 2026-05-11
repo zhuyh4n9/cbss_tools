@@ -155,7 +155,7 @@ class SimulateCube(ICube):
 
         try:
             key = self._read_private_key()
-            # uuid_bytes 在当前协议中即为32字节预哈希值，需按 Prehashed 直接签名，避免重复哈希。
+            # uuid_bytes 在当前协议中即为 32 字节预哈希值，需按 Prehashed 直接签名，避免重复哈希。
             der = key.sign(uuid_bytes, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
             r, s = decode_dss_signature(der)
             signature = (r.to_bytes(32, byteorder="big") + s.to_bytes(32, byteorder="big")).hex()
