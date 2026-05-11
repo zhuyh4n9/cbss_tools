@@ -53,7 +53,7 @@ class _FakeAdbManager:
     pass
 
 
-class TestDeviceMonitorSyncOnChange(unittest.TestCase):
+class TestDeviceMonitorChangeDetection(unittest.TestCase):
     def _make_monitor(self, source):
         monitor = DeviceMonitor(adb_manager=_FakeAdbManager(), config_manager=_FakeConfig())
         monitor._device_sources = {"Fake": source}
