@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from src.adb_manager import CommandResult, DeviceInfo, AuthenticatorInfo
 from src.auth_manager import AuthenticationManager
+from src.build_options import SIMULATED_DEVICE_STATUS_OPTIONS
 from src.target_device import ITargetDevice
 
 
@@ -49,8 +50,11 @@ class _FakeDeviceMonitor:
     def add_simulated_device(self, status: str):
         self._simulated_counter += 1
         serial = f"SIM-{self._simulated_counter:04d}"
+        status_input = (status or "").strip().lower()
+        status_map = {item.lower(): item for item in SIMULATED_DEVICE_STATUS_OPTIONS}
+        normalized_status = status_map.get(status_input, "Unauthorized")
         simulated = ITargetDevice.CreateSimulation(
-            status=status,
+            status=normalized_status,
             serial_number=serial,
         )
         self._simulated_objects[serial] = simulated

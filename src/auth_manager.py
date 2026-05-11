@@ -262,12 +262,6 @@ class AuthenticationManager:
         getter = getattr(self.device_monitor, "get_device_by_serial", None)
         if callable(getter):
             device_info = getter(serial)
-        if device_info and device_info.is_simulation:
-            return ITargetDevice.CreateSimulation(
-                status=device_info.status,
-                serial_number=serial,
-                uuid=(device_info.uuid or None),
-            )
 
         target_device = ITargetDevice.CreateAdbDevice(serial, self.adb_manager)
         if not isinstance(target_device, AC8267Device):
