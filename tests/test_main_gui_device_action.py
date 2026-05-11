@@ -51,6 +51,9 @@ class _FakeAuthManager:
     def is_device_activation_blocked(self, _serial):
         return self._blocked
 
+    def is_auto_activation_enabled(self):
+        return False
+
 
 class _FakeStatusVar:
     def __init__(self):
@@ -150,6 +153,26 @@ class TestMainGuiDeviceAction(unittest.TestCase):
         )
 
         self.assertEqual(heading, "工具异常 -- 请提交Bug")
+
+    def test_update_device_display_shows_authorization_failure_for_blocked_device(self):
+        gui = self.gui_class.__new__(self.gui_class)
+        gui.prompt_mgr = _FakePromptManager()
+        gui.auth_manager = _FakeAuthManager(blocked=True)
+        gui.config_manager = types.SimpleNamespace(getboolean=lambda *_args, **_kwargs: False)
+        gui.root = types.SimpleNamespace(after=lambda _delay, callback: callback())
+        captured_rows = []
+        gui._apply_device_rows = lambda rows: captured_rows.extend(rows)
+
+        device = types.SimpleNamespace(
+            serial="SIM-FAIL-LOCK-001",
+            status="Unauthorized",
+            device_type="target_device",
+            uuid="8bd957bdee...",
+            usb_port="SIM",
+        )
+        gui.update_device_display([device])
+
+        self.assertEqual(captured_rows[0][3], "AuthorizationFailure")
 
     def test_clear_logs_from_tools_menu_success(self):
         gui = self.gui_class.__new__(self.gui_class)

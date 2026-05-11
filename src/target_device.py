@@ -6,14 +6,18 @@ from typing import Optional
 from .adb_manager import ADBManager, CommandResult, DeviceInfo
 
 
-SUPPORTED_TARGET_STATUSES = {"authorized", "unauthorized", "pirated", "unknown"}
+SUPPORTED_TARGET_STATUSES = {
+    "authorized": "Authorized",
+    "unauthorized": "Unauthorized",
+    "pirated": "Pirated",
+    "unknown": "Unknown",
+    "authorizationfailure": "AuthorizationFailure",
+}
 
 
 def _normalize_status(status: str) -> str:
     normalized_status = (status or "").strip().lower()
-    if normalized_status in SUPPORTED_TARGET_STATUSES:
-        return normalized_status.capitalize()
-    return "Unknown"
+    return SUPPORTED_TARGET_STATUSES.get(normalized_status, "Unknown")
 
 
 class ITargetDevice(ABC):

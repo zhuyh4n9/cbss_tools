@@ -335,6 +335,7 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
 
             self.assertFalse(first["success"])
             self.assertFalse(second["success"])
+            self.assertEqual(fake_monitor.get_simulated_devices()[0].status, "AuthorizationFailure")
             self.assertIn("已锁定", second["message"])
             self.assertEqual(events.count("authenticator_sign"), 1)
             self.assertTrue(manager.is_device_activation_blocked(simulated.serial))

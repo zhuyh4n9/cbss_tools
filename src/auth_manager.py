@@ -20,6 +20,7 @@ from .cube import ICube, RealCube
 class AuthenticationManager:
     _READY_TIME_STATUS = "ready"
     _CRITICAL_BUG_LOG_PATH = os.path.join("logs", "critical_bug.log")
+    _AUTHORIZATION_FAILURE_STATUS = "AuthorizationFailure"
 
     def __init__(self, adb_manager: ADBManager, device_monitor: DeviceMonitor):
         self.adb_manager = adb_manager
@@ -152,6 +153,13 @@ class AuthenticationManager:
             stale = [serial for serial in self._blocked_activation_devices.keys() if serial not in current_serials]
             for serial in stale:
                 self._blocked_activation_devices.pop(serial, None)
+                simulated_getter = getattr(self.device_monitor, "get_simulated_device", None)
+                if callable(simulated_getter):
+                    simulated = simulated_getter(serial)
+                    if simulated is not None:
+                        set_status = getattr(simulated, "setStatus", None)
+                        if callable(set_status):
+                            set_status("Unauthorized")
                 logging.info("检测到设备插拔，已解除激活失败锁定: %s", serial)
 
     def is_device_activation_blocked(self, serial: str) -> bool:
@@ -195,6 +203,14 @@ class AuthenticationManager:
             self._record_critical_activation_bug(serial=serial, uuid=uuid, signature=signature, message=message, details=details)
         except Exception as e:
             logging.error("记录CRITICAL BUG日志失败: %s", e)
+
+    @staticmethod
+    def _set_target_device_status(target_device: Optional[ITargetDevice], status: str):
+        if target_device is None:
+            return
+        setter = getattr(target_device, "setStatus", None)
+        if callable(setter):
+            setter(status)
 
     def _pick_authenticator(self) -> Optional[str]:
         ready_authenticators = []
@@ -511,6 +527,7 @@ class AuthenticationManager:
             if not activate_result.success:
                 error_msg = f"设备激活失败: {activate_result.error_message}"
                 logging.error(error_msg)
+                self._set_target_device_status(target_device, self._AUTHORIZATION_FAILURE_STATUS)
                 self._mark_activation_failed_and_block(
                     serial=device_serial,
                     uuid=device_uuid,
@@ -556,6 +573,7 @@ class AuthenticationManager:
             else:
                 error_msg = f"设备激活可能失败，状态验证异常: {verify_error}"
                 logging.warning(error_msg)
+                self._set_target_device_status(target_device, self._AUTHORIZATION_FAILURE_STATUS)
                 self._mark_activation_failed_and_block(
                     serial=device_serial,
                     uuid=device_uuid,

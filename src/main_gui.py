@@ -784,6 +784,9 @@ class AuthenticatorToolGUI:
                 continue
 
             status_text = (device.status or "").strip()
+            blocked_getter = getattr(self.auth_manager, "is_device_activation_blocked", None)
+            if callable(blocked_getter) and blocked_getter(str(device.serial)):
+                status_text = "AuthorizationFailure"
             if not status_text:
                 status_text = "Checking..."
             status_lower = status_text.lower()
@@ -1586,7 +1589,12 @@ class AuthenticatorToolGUI:
 
         ttk.Label(frame, text=self.prompt_mgr.get('Dialogs.simulated_device_status_label')).pack(anchor='w', pady=(0, 8))
         status_var = tk.StringVar(value="Unauthorized")
-        status_box = ttk.Combobox(frame, textvariable=status_var, state="readonly", values=["Unauthorized", "Authorized", "Pirated"])
+        status_box = ttk.Combobox(
+            frame,
+            textvariable=status_var,
+            state="readonly",
+            values=["Unauthorized", "Authorized", "Pirated", "AuthorizationFailure"],
+        )
         status_box.pack(fill=tk.X, pady=(0, 12))
 
         ttk.Label(frame, text=self.prompt_mgr.get('Dialogs.simulated_device_serial_label')).pack(anchor='w', pady=(0, 4))

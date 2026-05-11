@@ -30,6 +30,7 @@ class TestTargetDeviceFactory(unittest.TestCase):
     def test_normalize_status(self):
         self.assertEqual(_normalize_status("authorized"), "Authorized")
         self.assertEqual(_normalize_status("  PIRATED "), "Pirated")
+        self.assertEqual(_normalize_status("authorizationfailure"), "AuthorizationFailure")
         self.assertEqual(_normalize_status("checking"), "Unknown")
 
     def test_create_simulation(self):
