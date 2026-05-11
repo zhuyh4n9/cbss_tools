@@ -37,15 +37,19 @@ class _FakePromptManager:
 
 
 class _FakeAuthManager:
-    def __init__(self, queued=False, completed=False):
+    def __init__(self, queued=False, completed=False, blocked=False):
         self._queued = queued
         self._completed = completed
+        self._blocked = blocked
 
     def is_device_queued_for_auto_activation(self, _serial):
         return self._queued
 
     def is_device_auto_activation_completed(self, _serial):
         return self._completed
+
+    def is_device_activation_blocked(self, _serial):
+        return self._blocked
 
 
 class _FakeStatusVar:
@@ -129,6 +133,20 @@ class TestMainGuiDeviceAction(unittest.TestCase):
             status_lower="unauthorized",
             uuid_display="8bd957bdee...",
             auto_enabled=True,
+        )
+
+        self.assertEqual(heading, "工具异常 -- 请提交Bug")
+
+    def test_blocked_device_shows_bug_hint_even_in_manual_mode(self):
+        gui = self.gui_class.__new__(self.gui_class)
+        gui.prompt_mgr = _FakePromptManager()
+        gui.auth_manager = _FakeAuthManager(queued=False, completed=False, blocked=True)
+
+        heading = gui._resolve_device_action_heading(
+            serial="SIM-FAIL-LOCK-001",
+            status_lower="unauthorized",
+            uuid_display="8bd957bdee...",
+            auto_enabled=False,
         )
 
         self.assertEqual(heading, "工具异常 -- 请提交Bug")

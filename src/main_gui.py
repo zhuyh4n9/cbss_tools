@@ -749,6 +749,9 @@ class AuthenticatorToolGUI:
         auto_done_text = self.prompt_mgr.get('DeviceTable.action_auto_completed')
         auto_anomaly_text = self.prompt_mgr.get('DeviceTable.action_auto_queue_anomaly')
         uuid_ready = self._is_uuid_ready(uuid_display)
+        blocked_getter = getattr(self.auth_manager, "is_device_activation_blocked", None)
+        if callable(blocked_getter) and blocked_getter(serial):
+            return auto_anomaly_text
 
         if auto_enabled:
             if self.auth_manager.is_device_auto_activation_completed(serial):

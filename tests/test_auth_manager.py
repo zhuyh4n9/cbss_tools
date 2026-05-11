@@ -102,6 +102,12 @@ class _FailingRefreshDeviceMonitor(_FakeDeviceMonitor):
         raise RuntimeError("refresh failed")
 
 
+class _CloneReturningFakeDeviceMonitor(_FakeDeviceMonitor):
+    def get_target_device(self, serial: str):
+        device = self._simulated_objects.get(str(serial or ""))
+        return device.clone() if device else None
+
+
 class _FakeAdbManager:
     def __init__(self, events=None):
         self.events = events if events is not None else []
@@ -293,6 +299,20 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
             self.assertIn("authenticator_sign", events)
             self.assertNotIn("get_device_uuid", events)
             self.assertNotIn("verify_device_state", events)
+            self.assertEqual(fake_monitor.get_simulated_devices()[0].status, "Authorized")
+
+    def test_simulated_device_activation_persists_status_when_target_getter_returns_clone(self):
+        events = []
+        fake_monitor = _CloneReturningFakeDeviceMonitor(events=events)
+        fake_adb_manager = _FakeAdbManager(events=events)
+
+        with patch("src.auth_manager.ENABLE_SIMULATED_DEVICE", True):
+            manager = AuthenticationManager(adb_manager=fake_adb_manager, device_monitor=fake_monitor)
+            simulated = fake_monitor.add_simulated_device("Unauthorized", serial_id="SIM-CLONE-0001")
+
+            result = manager._perform_authentication(simulated.serial, "CUBE-001")
+
+            self.assertTrue(result["success"])
             self.assertEqual(fake_monitor.get_simulated_devices()[0].status, "Authorized")
 
     def test_failed_activation_is_blocked_until_unplug_and_written_to_critical_log(self):

@@ -292,6 +292,12 @@ class AuthenticationManager:
     def _resolve_target_device(self, device_serial: str) -> ITargetDevice:
         """Resolve target device instance by serial for unified authentication flow."""
         serial = str(device_serial or "").strip()
+        simulated_getter = getattr(self.device_monitor, "get_simulated_device", None)
+        if callable(simulated_getter):
+            simulated_target = simulated_getter(serial)
+            if simulated_target is not None:
+                return simulated_target
+
         target_getter = getattr(self.device_monitor, "get_target_device", None)
         if callable(target_getter):
             existing_target = target_getter(serial)
