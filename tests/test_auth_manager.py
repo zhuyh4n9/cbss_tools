@@ -35,6 +35,7 @@ class _FakeDeviceMonitor:
         self.refresh_all_cube_calls = 0
         self.refresh_device_calls = []
         self.refresh_all_device_calls = 0
+        self.update_devices_calls = 0
         self.device_sources = []
         self._devices = {}
         self._simulated_counter = 0
@@ -50,6 +51,11 @@ class _FakeDeviceMonitor:
 
     def refresh_all_device(self):
         self.refresh_all_device_calls += 1
+
+    def update_devices(self):
+        self.update_devices_calls += 1
+        for serial, simulated in self._simulated_objects.items():
+            self._devices[serial] = simulated.to_device_info()
 
     def get_authenticator_by_serial(self, serial: str):
         return self.authenticators.get(serial)
@@ -204,6 +210,26 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         self.assertEqual(fake_monitor.refresh_all_cube_calls, 1)
         self.assertEqual(fake_monitor.refresh_device_calls, [manager.TEST_SERIAL])
         self.assertEqual(fake_monitor.refresh_all_device_calls, 0)
+        self.assertEqual(fake_monitor.update_devices_calls, 1)
+
+    def test_auto_activation_simulator_duplicate_queue_consumes_one_token_only(self):
+        fake_monitor = _FakeDeviceMonitor()
+        fake_adb_manager = _FakeAdbManager()
+        manager = AuthenticationManager(adb_manager=fake_adb_manager, device_monitor=fake_monitor)
+        simulated = fake_monitor.add_simulated_device("Unauthorized", serial_id="SIM-AUTO-ONCE-001", uuid="UUID-AUTO-ONCE-001")
+
+        manager._auto_activation_enabled = True
+        manager._worker_running = True
+        manager._stop_event.clear()
+        manager._queued_serials.add(simulated.serial)
+        manager._activate_queue.put(simulated.serial)
+        manager._activate_queue.put(simulated.serial)
+        manager._activate_queue.put(None)
+
+        manager._activate_worker_loop()
+
+        self.assertEqual(fake_adb_manager.events.count("authenticator_sign"), 1)
+        self.assertGreaterEqual(fake_monitor.update_devices_calls, 1)
 
     def test_refresh_cube_after_activation(self):
         events = []

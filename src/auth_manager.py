@@ -303,6 +303,13 @@ class AuthenticationManager:
 
                 # 自动授权后刷新 Cube 和当前 Target Device（仅在未停止时执行）
                 if self._worker_running and not self._stop_event.is_set():
+                    if result.get('success'):
+                        update_devices = getattr(self.device_monitor, "update_devices", None)
+                        if callable(update_devices):
+                            try:
+                                update_devices()
+                            except Exception as update_error:
+                                logging.warning("自动授权后刷新设备状态失败: %s", update_error)
                     self.device_monitor.refresh_all_cube()
                     self.device_monitor.refresh_device(serial)
             except Exception as e:
