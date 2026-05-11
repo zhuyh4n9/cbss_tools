@@ -11,7 +11,7 @@ import os
 from typing import List, Optional, Callable, Dict
 from .adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
 from .device_monitor import DeviceMonitor
-from .build_options import ENABLE_SIMULATED_DEVICE, SIMULATED_DEVICE_STATUS_OPTIONS
+from .build_options import ENABLE_SIMULATED_DEVICE, SIMULATED_DEVICE_STATUS_OPTIONS, is_simulated_device_enabled
 from .target_device import AC8267Device, ITargetDevice, SimulatorDevice
 from .cube import ICube, RealCube, SimulateCube, SimulateCubeConfig
 
@@ -231,7 +231,7 @@ class AuthenticationManager:
 
     def is_simulated_device_enabled(self) -> bool:
         """是否启用模拟设备功能（编译/打包选项）"""
-        return ENABLE_SIMULATED_DEVICE
+        return bool(ENABLE_SIMULATED_DEVICE or is_simulated_device_enabled())
 
     def is_simulated_device(self, serial: str) -> bool:
         serial = str(serial or "")

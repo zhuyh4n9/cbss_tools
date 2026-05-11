@@ -1,5 +1,16 @@
 # CBSS工具更新日志
 
+## v3.1.5 (2026-05-11)
+
+### 问题修复
+1. **修复模拟设备开关无法稳定启用问题**
+   - `CBSS_ENABLE_SIMULATED_DEVICE` 支持 `1/true/yes/on/enable/enabled` 等真值写法
+   - 激活管理器改为同时兼容构建期常量与运行时环境变量读取
+
+2. **修复目标设备信息被周期性重复解析问题**
+   - `DeviceMonitor` 仅在设备连接状态发生变化时同步到 `DeviceParser`
+   - `refresh_all_cube` 仅刷新 Cube 快照，不再触发 TargetDevice 重解析
+
 ## v3.1.4 (2026-05-09)
 
 ### 问题修复

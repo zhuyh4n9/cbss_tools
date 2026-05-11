@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from src.adb_manager import CommandResult, DeviceInfo, AuthenticatorInfo
 from src.auth_manager import AuthenticationManager
@@ -163,6 +164,17 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
 
         self.assertTrue(manager.is_device_queued_for_auto_activation(serial))
         self.assertFalse(manager.is_device_auto_activation_completed(serial))
+
+    def test_simulated_device_env_switch_supports_truthy_values(self):
+        manager = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=_FakeDeviceMonitor())
+
+        with patch('src.auth_manager.ENABLE_SIMULATED_DEVICE', False):
+            with patch.dict('os.environ', {'CBSS_ENABLE_SIMULATED_DEVICE': 'true'}, clear=False):
+                self.assertTrue(manager.is_simulated_device_enabled())
+            with patch.dict('os.environ', {'CBSS_ENABLE_SIMULATED_DEVICE': '1'}, clear=False):
+                self.assertTrue(manager.is_simulated_device_enabled())
+            with patch.dict('os.environ', {'CBSS_ENABLE_SIMULATED_DEVICE': '0'}, clear=False):
+                self.assertFalse(manager.is_simulated_device_enabled())
 
 
 if __name__ == "__main__":

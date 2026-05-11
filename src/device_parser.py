@@ -232,18 +232,8 @@ class DeviceParser:
         self._wake_event.set()
 
     def refresh_all_cube(self):
-        """刷新全部authenticator：触发重新识别与状态校验"""
-        with self._lock:
-            for serial, dev in list(self._ready_queue.items()):
-                if dev.to_device_info().device_type in ("target_device", "unknown") and serial not in self._classify_queue:
-                    self._classify_queue.append(serial)
-
-            for serial in list(self._await_queue.keys()):
-                if serial not in self._classify_queue:
-                    self._classify_queue.append(serial)
-
+        """刷新全部authenticator状态，不触发目标设备重解析"""
         self.cube_manager.refresh_all_cube()
-        self._wake_event.set()
 
     def get_devices(self) -> List[DeviceInfo]:
         """获取当前显示设备（await+ready，保持顺序）"""

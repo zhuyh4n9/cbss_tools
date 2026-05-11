@@ -145,16 +145,35 @@ class DeviceMonitor:
                         devices.append(device)
                 except Exception as source_error:
                     logging.error(f"设备来源 {source_name} 轮询失败: {source_error}")
-            # 设备监控仅负责插拔同步，设备类型辨别与目标设备解析由device_parser负责
             new_connected_index = {d.serial: d for d in devices}
-            self._connected_index = new_connected_index
-            self.device_parser.sync_connected_devices(list(new_connected_index.values()))
+            if self._has_connected_devices_changed(self._connected_index, new_connected_index):
+                # 设备监控仅在连接状态发生变化时同步，避免重复触发目标设备解析
+                self._connected_index = new_connected_index
+                self.device_parser.sync_connected_devices(list(new_connected_index.values()))
 
             # 激活盒子详情由DeviceParser内部CubeManager更新并回调
 
         except Exception as e:
             logging.error(f"更新设备信息失败: {e}")
             raise
+
+    @staticmethod
+    def _has_connected_devices_changed(old_index: Dict[str, DeviceInfo], new_index: Dict[str, DeviceInfo]) -> bool:
+        if set(old_index.keys()) != set(new_index.keys()):
+            return True
+
+        for serial, new_device in new_index.items():
+            old_device = old_index.get(serial)
+            if old_device is None:
+                return True
+            if (
+                old_device.status != new_device.status or
+                old_device.usb_port != new_device.usb_port or
+                old_device.detection_method != new_device.detection_method or
+                bool(old_device.is_simulation) != bool(new_device.is_simulation)
+            ):
+                return True
+        return False
 
     def _get_authenticator_info(self, serial: str) -> Optional[AuthenticatorInfo]:
         """获取激活盒子详细信息"""
