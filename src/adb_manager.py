@@ -207,7 +207,7 @@ class ADBManager:
         return result
 
     @staticmethod
-    def _normalize_identifier(value: str) -> str:
+    def _normalize_identifier(value: Optional[str]) -> str:
         return str(value or "").strip(" \t\r\n")
 
     def activate_device(self, serial: str, sign_hex: str) -> CommandResult:

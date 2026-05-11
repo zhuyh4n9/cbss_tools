@@ -6,7 +6,7 @@ import os
 
 def is_simulated_device_enabled() -> bool:
     enabled_values = {"1", "true", "yes", "on", "enable", "enabled"}
-    value = str(os.environ.get("CBSS_ENABLE_SIMULATED_DEVICE", "0") or "").strip().lower()
+    value = str(os.environ.get("CBSS_ENABLE_SIMULATED_DEVICE", "0")).strip().lower()
     return value in enabled_values
 
 

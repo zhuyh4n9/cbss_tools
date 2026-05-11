@@ -159,6 +159,7 @@ class DeviceMonitor:
 
     @staticmethod
     def _has_connected_devices_changed(old_index: Dict[str, DeviceInfo], new_index: Dict[str, DeviceInfo]) -> bool:
+        """判断连接设备是否变化（序列集合或状态/端口/检测方式/仿真标记变化）。"""
         if set(old_index.keys()) != set(new_index.keys()):
             return True
 
