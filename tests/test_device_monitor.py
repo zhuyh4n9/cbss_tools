@@ -106,6 +106,7 @@ class TestDeviceMonitorUpdateBehavior(unittest.TestCase):
         self.assertEqual(simulated.uuid, "UUID-USER-1001")
         target = monitor.get_simulated_device("SIM-USER-1001")
         self.assertTrue(target.fail_on_activate)
+        self.assertIs(monitor.get_target_device("SIM-USER-1001"), target)
 
     @patch("src.device_monitor.ENABLE_SIMULATED_DEVICE", True)
     @patch("src.device_monitor.DeviceParser", _FakeParser)

@@ -12,7 +12,12 @@ from src.target_device import ITargetDevice
 
 
 class _FakeConfig:
+    def __init__(self, auto_activation_enabled: bool = False):
+        self._auto_activation_enabled = bool(auto_activation_enabled)
+
     def getboolean(self, section, key, default=False):
+        if section == "General" and key == "auto_activation_enabled":
+            return self._auto_activation_enabled
         return False
 
 
@@ -22,8 +27,8 @@ class _FakeDeviceParser:
 
 
 class _FakeDeviceMonitor:
-    def __init__(self, events=None):
-        self.config = _FakeConfig()
+    def __init__(self, events=None, auto_activation_enabled: bool = False):
+        self.config = _FakeConfig(auto_activation_enabled=auto_activation_enabled)
         self.device_parser = _FakeDeviceParser()
         self.events = events if events is not None else []
         self.authenticators = {"CUBE-001": AuthenticatorInfo(serial="CUBE-001", time_status="Ready")}
@@ -102,10 +107,9 @@ class _FailingRefreshDeviceMonitor(_FakeDeviceMonitor):
         raise RuntimeError("refresh failed")
 
 
-class _CloneReturningFakeDeviceMonitor(_FakeDeviceMonitor):
-    def get_target_device(self, serial: str):
-        device = self._simulated_objects.get(str(serial or ""))
-        return device.clone() if device else None
+class _NoSimulatorAccessorMonitor(_FakeDeviceMonitor):
+    def get_simulated_device(self, serial: str):
+        raise AssertionError("auth_manager should not access get_simulated_device")
 
 
 class _FakeAdbManager:
@@ -293,6 +297,26 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
 
         self.assertTrue(manager.is_device_queued_for_auto_activation(serial))
 
+    def test_device_update_enqueues_unauthorized_device_for_auto_activation(self):
+        fake_monitor = _FakeDeviceMonitor()
+        manager = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=fake_monitor)
+        manager._auto_activation_enabled = True
+
+        device = DeviceInfo(serial="DEV-QUEUE-BY-UPDATE-001", status="Unauthorized", uuid="UUID-READY-001")
+        manager._on_device_update([device])
+
+        self.assertTrue(manager.is_device_queued_for_auto_activation(device.serial))
+
+    def test_resolve_target_device_does_not_use_simulator_accessor(self):
+        fake_monitor = _NoSimulatorAccessorMonitor()
+        simulated = fake_monitor.add_simulated_device("Unauthorized", serial_id="SIM-NO-ACCESS-001")
+        manager = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=fake_monitor)
+
+        resolved = manager._resolve_target_device(simulated.serial)
+
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.to_device_info().serial, simulated.serial)
+
     def test_simulated_device_source_and_auth_flow(self):
         events = []
         fake_monitor = _FakeDeviceMonitor(events=events)
@@ -311,20 +335,6 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
             self.assertIn("authenticator_sign", events)
             self.assertNotIn("get_device_uuid", events)
             self.assertNotIn("verify_device_state", events)
-            self.assertEqual(fake_monitor.get_simulated_devices()[0].status, "Authorized")
-
-    def test_simulated_device_activation_persists_status_when_target_getter_returns_clone(self):
-        events = []
-        fake_monitor = _CloneReturningFakeDeviceMonitor(events=events)
-        fake_adb_manager = _FakeAdbManager(events=events)
-
-        with patch("src.auth_manager.ENABLE_SIMULATED_DEVICE", True):
-            manager = AuthenticationManager(adb_manager=fake_adb_manager, device_monitor=fake_monitor)
-            simulated = fake_monitor.add_simulated_device("Unauthorized", serial_id="SIM-CLONE-0001")
-
-            result = manager._perform_authentication(simulated.serial, "CUBE-001")
-
-            self.assertTrue(result["success"])
             self.assertEqual(fake_monitor.get_simulated_devices()[0].status, "Authorized")
 
     def test_failed_activation_is_blocked_until_unplug_and_written_to_critical_log(self):
@@ -365,6 +375,7 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
 
             fail_sim = fake_monitor.get_simulated_device(simulated.serial)
             fail_sim.fail_on_activate = False
+            fail_sim.setStatus("Unauthorized")
             third = manager._perform_authentication(simulated.serial, "CUBE-001")
             self.assertTrue(third["success"])
 

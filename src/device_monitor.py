@@ -258,7 +258,7 @@ class DeviceMonitor:
         with self._simulated_lock:
             simulated = self._simulated_devices.get(serial)
             if simulated:
-                return simulated.clone()
+                return simulated
 
         getter = getattr(self.device_parser, "get_target_device", None)
         if callable(getter):

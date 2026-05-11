@@ -53,6 +53,7 @@ class AuthenticationManager:
 
         if self._auto_activation_enabled:
             self._start_activate_worker()
+            self._enqueue_existing_unauthorized_devices()
 
     def is_auto_activation_enabled(self) -> bool:
         """是否启用自动授权"""
@@ -148,19 +149,19 @@ class AuthenticationManager:
             logging.error(f"提交自动授权队列失败: {e}")
 
     def _on_device_update(self, devices: List[DeviceInfo]):
+        self._enqueue_unauthorized_devices_from_update(devices)
         current_serials = {str((d.serial if d else "") or "").strip() for d in (devices or [])}
         with self._blocked_lock:
             stale = [serial for serial in self._blocked_activation_devices.keys() if serial not in current_serials]
             for serial in stale:
                 self._blocked_activation_devices.pop(serial, None)
-                simulated_getter = getattr(self.device_monitor, "get_simulated_device", None)
-                if callable(simulated_getter):
-                    simulated = simulated_getter(serial)
-                    if simulated is not None:
-                        set_status = getattr(simulated, "setStatus", None)
-                        if callable(set_status):
-                            set_status("Unauthorized")
                 logging.info("检测到设备插拔，已解除激活失败锁定: %s", serial)
+
+    def _enqueue_unauthorized_devices_from_update(self, devices: List[DeviceInfo]):
+        if not self._auto_activation_enabled:
+            return
+        for device in (devices or []):
+            self._on_unauthorized_ready(device)
 
     def is_device_activation_blocked(self, serial: str) -> bool:
         key = str(serial or "").strip()
@@ -318,12 +319,6 @@ class AuthenticationManager:
     def _resolve_target_device(self, device_serial: str) -> ITargetDevice:
         """Resolve target device instance by serial for unified authentication flow."""
         serial = str(device_serial or "").strip()
-        simulated_getter = getattr(self.device_monitor, "get_simulated_device", None)
-        if callable(simulated_getter):
-            simulated_target = simulated_getter(serial)
-            if simulated_target is not None:
-                return simulated_target
-
         target_getter = getattr(self.device_monitor, "get_target_device", None)
         if callable(target_getter):
             existing_target = target_getter(serial)
