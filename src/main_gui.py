@@ -76,6 +76,8 @@ def _load_dependencies(prefix):
 NETWORK_MONITOR_THREAD_JOIN_TIMEOUT = 0.1
 
 class AuthenticatorToolGUI:
+    _SIMULATOR_DEVICE_TYPE = "SimulatorDevice"
+
     def __init__(self):
         self.root = tk.Tk()
         # initialize prompt manager before UI
@@ -1496,7 +1498,7 @@ class AuthenticatorToolGUI:
         if not device_serial:
             return
         target_device = self.device_monitor.get_target_device(device_serial)
-        if not target_device or target_device.getType() != "SimulatorDevice":
+        if not target_device or target_device.getType() != self._SIMULATOR_DEVICE_TYPE:
             return
 
         self.device_context_menu.delete(0, 'end')
@@ -1509,7 +1511,7 @@ class AuthenticatorToolGUI:
 
     def remove_simulated_device(self, device_serial: str):
         target_device = self.device_monitor.get_target_device(device_serial)
-        if not target_device or target_device.getType() != "SimulatorDevice":
+        if not target_device or target_device.getType() != self._SIMULATOR_DEVICE_TYPE:
             return False
 
         if not messagebox.askyesno(

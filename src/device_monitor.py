@@ -147,7 +147,7 @@ class DeviceMonitor:
         if status_input and status_input not in status_map:
             logging.warning("收到未知模拟设备状态，已回退为Unauthorized: %s", status)
 
-        serial = (serial_number or "").strip() or "SIM-0000"
+        serial = (serial_number or "").strip() or "SIM-AUTO"
         device = ITargetDevice.CreateSimulation(
             status=normalized_status,
             serial_number=serial,
