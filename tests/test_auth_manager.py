@@ -2,6 +2,8 @@ import unittest
 import tempfile
 from unittest.mock import patch
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from src.adb_manager import CommandResult, DeviceInfo, AuthenticatorInfo
 from src.auth_manager import AuthenticationManager
 from src.build_options import SIMULATED_DEVICE_STATUS_OPTIONS
@@ -152,6 +154,18 @@ class _StubCube:
         return AuthenticatorInfo(serial=self._serial, time_status="Ready")
 
 
+def _write_valid_private_key(path: str):
+    key = ec.generate_private_key(ec.SECP256R1())
+    with open(path, "wb") as f:
+        f.write(
+            key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+        )
+
+
 class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
     def test_auto_activation_refreshes_only_current_device(self):
         fake_monitor = _FakeDeviceMonitor()
@@ -275,8 +289,7 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             key_path = f"{tmpdir}/p256.pem"
             persist_path = f"{tmpdir}/cube.json"
-            with open(key_path, "w", encoding="utf-8") as f:
-                f.write("stub")
+            _write_valid_private_key(key_path)
 
             with patch("src.auth_manager.ENABLE_SIMULATED_DEVICE", True), \
                     patch("src.auth_manager.ICube.CreateSimulation", return_value=_StubCube("CUSTOM-001")) as create_mock:
@@ -301,8 +314,7 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             key_path = f"{tmpdir}/p256.pem"
             persist_path = f"{tmpdir}/cube.json"
-            with open(key_path, "w", encoding="utf-8") as f:
-                f.write("stub")
+            _write_valid_private_key(key_path)
             with open(persist_path, "w", encoding="utf-8") as f:
                 f.write("{}")
 
