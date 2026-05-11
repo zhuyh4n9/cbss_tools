@@ -7,14 +7,18 @@ import queue
 import secrets
 import threading
 import time
+import os
 from typing import List, Optional, Callable, Dict
-from .adb_manager import ADBManager, DeviceInfo
+from .adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
 from .device_monitor import DeviceMonitor
 from .build_options import ENABLE_SIMULATED_DEVICE, SIMULATED_DEVICE_STATUS_OPTIONS
 from .target_device import AC8267Device, ITargetDevice, SimulatorDevice
+from .cube import ICube, RealCube, SimulateCube, SimulateCubeConfig
 
 
 class AuthenticationManager:
+    _READY_TIME_STATUS = "ready"
+
     def __init__(self, adb_manager: ADBManager, device_monitor: DeviceMonitor):
         self.adb_manager = adb_manager
         self.device_monitor = device_monitor
@@ -27,6 +31,7 @@ class AuthenticationManager:
         self._activate_queue: queue.Queue[Optional[str]] = queue.Queue()
         self._queued_serials = set()
         self._in_progress_serials = set()
+        self._auto_activation_completed_serials = set()
         self._queue_lock = threading.Lock()
         self._worker_running = False
         self._worker_thread = None
@@ -34,6 +39,8 @@ class AuthenticationManager:
         self._simulated_devices: Dict[str, SimulatorDevice] = {}
         self._simulated_counter = 0
         self._simulated_lock = threading.Lock()
+        self._simulated_cubes: Dict[str, SimulateCube] = {}
+        self._simulated_cube_counter = 0
 
         # 始终注册回调，是否入队由开关控制
         self.device_monitor.device_parser.add_callback('unauthorized_ready', self._on_unauthorized_ready)
@@ -66,6 +73,7 @@ class AuthenticationManager:
         with self._queue_lock:
             self._queued_serials.clear()
             self._in_progress_serials.clear()
+            self._auto_activation_completed_serials.clear()
 
         while True:
             try:
@@ -123,6 +131,7 @@ class AuthenticationManager:
             with self._queue_lock:
                 if serial in self._queued_serials or serial in self._in_progress_serials:
                     return
+                self._auto_activation_completed_serials.discard(serial)
                 self._queued_serials.add(serial)
 
             self._activate_queue.put(serial)
@@ -131,11 +140,20 @@ class AuthenticationManager:
             logging.error(f"提交自动授权队列失败: {e}")
 
     def _pick_authenticator(self) -> Optional[str]:
-        authenticators = self.get_available_authenticators()
-        if not authenticators:
+        ready_authenticators = []
+        for serial in self.get_available_authenticators():
+            if self.is_simulated_cube(serial):
+                ready_authenticators.append(serial)
+                continue
+            auth_info = self.device_monitor.get_authenticator_by_serial(serial)
+            time_status = self._normalize_status(getattr(auth_info, 'time_status', ''))
+            if time_status == self._READY_TIME_STATUS:
+                ready_authenticators.append(serial)
+
+        if not ready_authenticators:
             return None
         # 固定顺序选择，避免来回切换
-        return sorted(authenticators)[0]
+        return sorted(ready_authenticators)[0]
 
     def _is_device_still_unauthorized(self, serial: str) -> bool:
         try:
@@ -192,6 +210,8 @@ class AuthenticationManager:
                 result = self._run_authentication(serial, authenticator_serial)
                 if result.get('success'):
                     logging.info(f"自动授权成功: {serial}")
+                    with self._queue_lock:
+                        self._auto_activation_completed_serials.add(serial)
                 else:
                     logging.warning(f"自动授权失败: {serial}, {result.get('message', '')}")
 
@@ -392,6 +412,7 @@ class AuthenticationManager:
             logging.info(f"开始激活设备: {device_serial}")
 
             if self.is_simulated_device(device_serial):
+                cube = self._resolve_cube(authenticator_serial)
                 if progress_callback:
                     progress_callback("正在准备模拟设备认证...")
 
@@ -416,7 +437,7 @@ class AuthenticationManager:
                 if progress_callback:
                     progress_callback("正在使用激活盒子签名...")
 
-                sign_result = self.adb_manager.authenticator_sign(authenticator_serial, device_uuid)
+                sign_result = cube.sign_uuid(device_uuid)
                 if not sign_result.success:
                     error_msg = f"激活盒子签名失败: {sign_result.error_message}"
                     logging.error(error_msg)
@@ -451,6 +472,7 @@ class AuthenticationManager:
                 }
 
             # 步骤1: 获取设备UUID
+            cube = self._resolve_cube(authenticator_serial)
             if progress_callback:
                 progress_callback("正在获取设备UUID...")
 
@@ -480,7 +502,7 @@ class AuthenticationManager:
             if progress_callback:
                 progress_callback("正在使用激活盒子签名...")
 
-            sign_result = self.adb_manager.authenticator_sign(authenticator_serial, device_uuid)
+            sign_result = cube.sign_uuid(device_uuid)
             if not sign_result.success:
                 error_msg = f"激活盒子签名失败: {sign_result.error_message}"
                 logging.error(error_msg)
@@ -578,7 +600,90 @@ class AuthenticationManager:
 
     def get_available_authenticators(self) -> List[str]:
         """获取可用的激活盒子列表"""
-        return list(self.device_monitor.authenticators.keys())
+        serials = set(self.device_monitor.authenticators.keys())
+        with self._simulated_lock:
+            serials.update(self._simulated_cubes.keys())
+        return sorted(serials)
+
+    def is_simulated_cube(self, serial: str) -> bool:
+        with self._simulated_lock:
+            return str(serial or "") in self._simulated_cubes
+
+    def get_simulated_cube_infos(self) -> Dict[str, AuthenticatorInfo]:
+        with self._simulated_lock:
+            return {serial: cube.to_authenticator_info() for serial, cube in self._simulated_cubes.items()}
+
+    def create_simulated_cube(self, expired_date: str, counter: int, private_key_path: str, cube_id: str, oem_id: str, persist_path: str) -> str:
+        if not self.is_simulated_device_enabled():
+            raise RuntimeError("模拟设备功能未启用")
+        if not private_key_path or not os.path.exists(private_key_path):
+            raise ValueError("P256私钥路径无效")
+        if not persist_path:
+            raise ValueError("持久化路径不能为空")
+        with self._simulated_lock:
+            self._simulated_cube_counter += 1
+            serial = f"SIM-CUBE-{self._simulated_cube_counter:04d}"
+            config_obj = SimulateCubeConfig(
+                serial=serial,
+                cube_id=str(cube_id or serial),
+                oem_id=str(oem_id or ""),
+                expired_date=str(expired_date or ""),
+                counter=max(int(counter), 0),
+                private_key_path=str(private_key_path),
+                persist_path=str(persist_path),
+            )
+            self._simulated_cubes[serial] = SimulateCube.create(config_obj)
+        return serial
+
+    def load_simulated_cube(self, persist_path: str, private_key_path: str) -> str:
+        if not self.is_simulated_device_enabled():
+            raise RuntimeError("模拟设备功能未启用")
+        if not persist_path or not os.path.exists(persist_path):
+            raise ValueError("Cube持久化路径无效")
+        if not private_key_path or not os.path.exists(private_key_path):
+            raise ValueError("P256私钥路径无效")
+        with self._simulated_lock:
+            self._simulated_cube_counter += 1
+            serial = f"SIM-CUBE-{self._simulated_cube_counter:04d}"
+            cube = SimulateCube.load(persist_path=persist_path, private_key_path=private_key_path, serial_override=serial)
+            self._simulated_cubes[serial] = cube
+        return serial
+
+    def perform_cube_operation(self, operation: str, serial: str, payload: str):
+        cube = self._resolve_cube(serial)
+        if operation == 'lock':
+            return cube.lock(payload)
+        if operation == 'unlock':
+            return cube.unlock(payload)
+        if operation == 'activate':
+            return cube.activate(payload)
+        if operation == 'config':
+            return cube.config(payload)
+        raise ValueError(f"Unsupported cube operation: {operation}")
+
+    def _resolve_cube(self, serial: str) -> ICube:
+        serial = str(serial or "").strip()
+        with self._simulated_lock:
+            if serial in self._simulated_cubes:
+                return self._simulated_cubes[serial]
+        known_authenticators = getattr(self.device_monitor, "authenticators", {}) or {}
+        if serial not in known_authenticators:
+            raise ValueError(f"未找到Cube: {serial}")
+        return RealCube(serial=serial, adb_manager=self.adb_manager)
+
+    @staticmethod
+    def _normalize_status(value: str) -> str:
+        return str(value or "").strip().lower()
+
+    def is_device_queued_for_auto_activation(self, serial: str) -> bool:
+        serial = str(serial or "")
+        with self._queue_lock:
+            return serial in self._queued_serials or serial in self._in_progress_serials
+
+    def is_device_auto_activation_completed(self, serial: str) -> bool:
+        serial = str(serial or "")
+        with self._queue_lock:
+            return serial in self._auto_activation_completed_serials
 
     def get_unauthorized_devices(self) -> List[DeviceInfo]:
         """获取未激活设备列表"""

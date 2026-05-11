@@ -75,6 +75,18 @@ class DeviceParser:
             except Exception as e:
                 logging.error(f"DeviceParser 回调执行失败: {e}")
 
+    @staticmethod
+    def _log_device_event(event: str, device_info: DeviceInfo):
+        logging.info(
+            "设备事件: %s, serial=%s, status=%s, device_type=%s, usb_port=%s, detection=%s",
+            event,
+            device_info.serial,
+            device_info.status,
+            device_info.device_type,
+            device_info.usb_port,
+            device_info.detection_method
+        )
+
     def _to_target_device(self, device: DeviceInfo) -> TargetDeviceAbstract:
         detection_method = (device.detection_method or "Unknown").strip() or "Unknown"
         serial = str(device.serial)
@@ -135,6 +147,12 @@ class DeviceParser:
             added = new - current
 
             for serial in removed:
+                removed_info = self._base_devices.get(serial)
+                if removed_info:
+                    try:
+                        self._log_device_event("removed", removed_info.to_device_info())
+                    except Exception as log_error:
+                        logging.warning(f"记录设备移除日志失败 [{serial}]: {log_error}")
                 self._base_devices.pop(serial, None)
                 self._await_queue.pop(serial, None)
                 self._ready_queue.pop(serial, None)
@@ -143,6 +161,10 @@ class DeviceParser:
                 self.cube_manager.remove_cube(serial)
 
             for serial in added:
+                try:
+                    self._log_device_event("added", incoming[serial].to_device_info())
+                except Exception as log_error:
+                    logging.warning(f"记录新设备日志失败 [{serial}]: {log_error}")
                 self._base_devices[serial] = incoming[serial]
                 if serial not in self._order:
                     self._order.append(serial)

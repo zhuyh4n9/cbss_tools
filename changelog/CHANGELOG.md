@@ -1,5 +1,41 @@
 # CBSS工具更新日志
 
+## v3.1.4 (2026-05-09)
+
+### 问题修复
+1. **修复打包后 exe 启动即退出的问题**
+   - PyInstaller spec 增加 `collect_submodules('src')`，确保动态导入的 `src.*` 模块被完整打包
+   - 补充 `tkinter.simpledialog` 隐式依赖，避免窗口组件导入失败导致程序启动中止
+
+## v3.1.3 (2026-05-09)
+
+### 问题修复
+1. **修复打包后可执行文件运行依赖检查不足问题**
+   - 在构建可执行文件前新增关键依赖与关键文件检查（PyInstaller、cryptography、tkinter、prompt配置文件）
+   - 打包spec新增 `config/prompt_chn.ini`，避免运行时缺少提示文本配置
+2. **修复开发包脚本引用无效构建脚本问题**
+   - 开发包改为携带 `package_all.py`
+   - `setup_dev.bat` 和开发说明中的打包命令更新为 `python package_all.py --type portable`
+   - 新增 `setup_venv.bat` 作为 venv 初始化快捷入口
+
+## v3.1.2 (2026-05-09)
+
+### 问题修复
+1. **修复 `src/main_gui.py` 直接运行时报错**
+   - 解决 `ImportError: attempted relative import with no known parent package`
+   - 现在可兼容包内导入与脚本直接运行两种启动方式
+
+## v3.1.1 (2026-05-09)
+
+### 功能优化
+1. **自动授权逻辑优化**
+   - 自动授权仅在存在 `time_status=Ready` 的 Cube 时执行，Cube 未 Ready 时队列等待，Ready 后自动继续
+2. **设备列表操作文案优化**
+   - 自动授权开启时：排队设备显示“等待自动授权”，自动授权完成设备显示“自动授权已完成”
+   - 自动授权关闭时：不可激活显示“无法进行激活”，可手动激活显示“双击开始激活”
+3. **设备插拔日志增强**
+   - 新设备接入/设备移除时，以 INFO 级别记录事件、Serial ID、状态和连接信息
+
 ## v3.1 (2026-05-07)
 
 ### 功能优化
