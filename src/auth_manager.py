@@ -222,6 +222,9 @@ class AuthenticationManager:
             auth_info = self.device_monitor.get_authenticator_by_serial(serial)
             if auth_info is None:
                 auth_info = simulated_infos.get(serial)
+            if auth_info is None:
+                logging.warning("未找到Cube信息，跳过Ready判定: %s", serial)
+                continue
             time_status = self._normalize_status(getattr(auth_info, 'time_status', ''))
             if time_status == self._READY_TIME_STATUS:
                 ready_authenticators.append(serial)
@@ -477,14 +480,6 @@ class AuthenticationManager:
                 }
             device_uuid = (uuid_result.result_data or "").strip()
             target_device.setUuid(device_uuid)
-            if not device_uuid:
-                error_msg = "设备UUID为空"
-                logging.error(error_msg)
-                return {
-                    'success': False,
-                    'message': error_msg,
-                    'details': ''
-                }
 
             logging.info(f"获取到设备UUID: {device_uuid}")
 
