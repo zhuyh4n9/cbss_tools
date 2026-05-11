@@ -120,7 +120,7 @@ class AuthenticationManager:
         try:
             if not self._auto_activation_enabled or not device:
                 return
-            serial = str(device.serial)
+            serial = str(device.serial or "").strip()
             if not serial:
                 return
             if not (device.status and device.status.strip().lower() == "unauthorized"):
@@ -182,12 +182,14 @@ class AuthenticationManager:
             if serial is None:
                 break
 
-            serial = str(serial)
-            with self._queue_lock:
-                self._queued_serials.discard(serial)
+            serial = str(serial or "").strip()
+            if not serial:
+                continue
 
             # 设备状态变化后无需处理
             if not self._is_device_still_unauthorized(serial):
+                with self._queue_lock:
+                    self._queued_serials.discard(serial)
                 continue
 
             authenticator_serial = self._pick_authenticator()
@@ -204,6 +206,7 @@ class AuthenticationManager:
             with self._queue_lock:
                 if serial in self._in_progress_serials:
                     continue
+                self._queued_serials.discard(serial)
                 self._in_progress_serials.add(serial)
 
             try:

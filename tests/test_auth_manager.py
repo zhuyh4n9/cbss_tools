@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from src.adb_manager import CommandResult, DeviceInfo, AuthenticatorInfo
 from src.auth_manager import AuthenticationManager
@@ -88,6 +89,16 @@ class _TestableAuthenticationManager(AuthenticationManager):
         return {"success": True}
 
 
+class _NoCubeAuthenticationManager(AuthenticationManager):
+    TEST_SERIAL = "DEV-NO-CUBE-001"
+
+    def _is_device_still_unauthorized(self, serial: str) -> bool:
+        return serial == self.TEST_SERIAL
+
+    def _pick_authenticator(self):
+        return None
+
+
 class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
     def test_auto_activation_refreshes_only_current_device(self):
         fake_monitor = _FakeDeviceMonitor()
@@ -163,6 +174,26 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
 
         self.assertTrue(manager.is_device_queued_for_auto_activation(serial))
         self.assertFalse(manager.is_device_auto_activation_completed(serial))
+
+    def test_waiting_for_cube_keeps_device_marked_as_queued(self):
+        fake_monitor = _FakeDeviceMonitor()
+        manager = _NoCubeAuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=fake_monitor)
+        manager._auto_activation_enabled = True
+        manager._worker_running = True
+        manager._stop_event.clear()
+
+        serial = manager.TEST_SERIAL
+        manager._queued_serials.add(serial)
+        manager._activate_queue.put(serial)
+        manager._activate_queue.put(None)
+
+        def _fake_sleep(_seconds):
+            self.assertTrue(manager.is_device_queued_for_auto_activation(serial))
+
+        with patch("src.auth_manager.time.sleep", side_effect=_fake_sleep):
+            manager._activate_worker_loop()
+
+        self.assertTrue(manager.is_device_queued_for_auto_activation(serial))
 
 
 if __name__ == "__main__":
