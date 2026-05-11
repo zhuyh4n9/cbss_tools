@@ -12,7 +12,7 @@ from .adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
 from .device_monitor import DeviceMonitor
 from .build_options import ENABLE_SIMULATED_DEVICE
 from .target_device import AC8267Device, ITargetDevice
-from .cube import ICube, RealCube, SimulateCube, SimulateCubeConfig
+from .cube import ICube, RealCube
 
 
 class AuthenticationManager:
@@ -36,7 +36,7 @@ class AuthenticationManager:
         self._worker_thread = None
         self._stop_event = threading.Event()
         self._simulated_lock = threading.Lock()
-        self._simulated_cubes: Dict[str, SimulateCube] = {}
+        self._simulated_cubes: Dict[str, ICube] = {}
         self._simulated_cube_counter = 0
 
         # 始终注册回调，是否入队由开关控制
@@ -544,7 +544,7 @@ class AuthenticationManager:
             serial = str(serial_id or "").strip() or self._allocate_simulated_cube_serial()
             if serial in self._simulated_cubes:
                 raise ValueError(f"模拟Cube序列号已存在: {serial}")
-            config_obj = SimulateCubeConfig(
+            self._simulated_cubes[serial] = ICube.CreateSimulation(
                 serial=serial,
                 cube_id=str(cube_id or serial),
                 oem_id=str(oem_id or ""),
@@ -553,7 +553,6 @@ class AuthenticationManager:
                 private_key_path=str(private_key_path),
                 persist_path=str(persist_path),
             )
-            self._simulated_cubes[serial] = SimulateCube.create(config_obj)
         return serial
 
     def load_simulated_cube(self, persist_path: str, private_key_path: str, serial_id: str = "") -> str:
@@ -565,7 +564,7 @@ class AuthenticationManager:
             raise ValueError("P256私钥路径无效")
         with self._simulated_lock:
             serial_override = str(serial_id or "").strip()
-            cube = SimulateCube.load(
+            cube = ICube.LoadSimulation(
                 persist_path=persist_path,
                 private_key_path=private_key_path,
                 serial_override=serial_override,

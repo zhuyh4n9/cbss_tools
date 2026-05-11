@@ -1,4 +1,5 @@
 import unittest
+import tempfile
 from unittest.mock import patch
 
 from src.adb_manager import CommandResult, DeviceInfo, AuthenticatorInfo
@@ -140,6 +141,17 @@ class _NoCubeAuthenticationManager(AuthenticationManager):
         return None
 
 
+class _StubCube:
+    def __init__(self, serial: str):
+        self._serial = serial
+
+    def get_serial(self):
+        return self._serial
+
+    def to_authenticator_info(self):
+        return AuthenticatorInfo(serial=self._serial, time_status="Ready")
+
+
 class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
     def test_auto_activation_refreshes_only_current_device(self):
         fake_monitor = _FakeDeviceMonitor()
@@ -255,6 +267,56 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
             self.assertNotIn("get_device_uuid", events)
             self.assertNotIn("verify_device_state", events)
             self.assertEqual(fake_monitor.get_simulated_devices()[0].status, "Authorized")
+
+    def test_create_simulated_cube_uses_icube_factory(self):
+        fake_monitor = _FakeDeviceMonitor()
+        manager = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=fake_monitor)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            key_path = f"{tmpdir}/p256.pem"
+            persist_path = f"{tmpdir}/cube.json"
+            with open(key_path, "w", encoding="utf-8") as f:
+                f.write("stub")
+
+            with patch("src.auth_manager.ENABLE_SIMULATED_DEVICE", True), \
+                    patch("src.auth_manager.ICube.CreateSimulation", return_value=_StubCube("CUSTOM-001")) as create_mock:
+                serial = manager.create_simulated_cube(
+                    expired_date="2099-12-31",
+                    counter=3,
+                    private_key_path=key_path,
+                    cube_id="CUBE-A",
+                    oem_id="OEM-A",
+                    persist_path=persist_path,
+                    serial_id="CUSTOM-001",
+                )
+
+        self.assertEqual(serial, "CUSTOM-001")
+        self.assertTrue(manager.is_simulated_cube("CUSTOM-001"))
+        create_mock.assert_called_once()
+
+    def test_load_simulated_cube_uses_icube_factory(self):
+        fake_monitor = _FakeDeviceMonitor()
+        manager = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=fake_monitor)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            key_path = f"{tmpdir}/p256.pem"
+            persist_path = f"{tmpdir}/cube.json"
+            with open(key_path, "w", encoding="utf-8") as f:
+                f.write("stub")
+            with open(persist_path, "w", encoding="utf-8") as f:
+                f.write("{}")
+
+            with patch("src.auth_manager.ENABLE_SIMULATED_DEVICE", True), \
+                    patch("src.auth_manager.ICube.LoadSimulation", return_value=_StubCube("CUSTOM-LOAD-001")) as load_mock:
+                serial = manager.load_simulated_cube(
+                    persist_path=persist_path,
+                    private_key_path=key_path,
+                    serial_id="CUSTOM-LOAD-001",
+                )
+
+        self.assertEqual(serial, "CUSTOM-LOAD-001")
+        self.assertTrue(manager.is_simulated_cube("CUSTOM-LOAD-001"))
+        load_mock.assert_called_once()
 
 
 if __name__ == "__main__":

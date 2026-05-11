@@ -27,6 +27,37 @@ class SimulateCubeConfig:
 
 
 class ICube(ABC):
+    @staticmethod
+    def CreateSimulation(
+        serial: str,
+        cube_id: str,
+        oem_id: str,
+        expired_date: str,
+        counter: int,
+        private_key_path: str,
+        persist_path: str,
+        authorized_device_num: int = 0,
+    ):
+        config = SimulateCubeConfig(
+            serial=str(serial or ""),
+            cube_id=str(cube_id or ""),
+            oem_id=str(oem_id or ""),
+            expired_date=str(expired_date or ""),
+            counter=max(int(counter or 0), 0),
+            private_key_path=str(private_key_path or ""),
+            persist_path=str(persist_path or ""),
+            authorized_device_num=max(int(authorized_device_num or 0), 0),
+        )
+        return SimulateCube.create(config)
+
+    @staticmethod
+    def LoadSimulation(persist_path: str, private_key_path: str, serial_override: str = ""):
+        return SimulateCube.load(
+            persist_path=str(persist_path or ""),
+            private_key_path=str(private_key_path or ""),
+            serial_override=str(serial_override or ""),
+        )
+
     @abstractmethod
     def get_serial(self) -> str:
         pass
