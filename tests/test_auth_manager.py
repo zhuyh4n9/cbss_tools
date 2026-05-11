@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from src.adb_manager import CommandResult, DeviceInfo, AuthenticatorInfo
 from src.auth_manager import AuthenticationManager
+from src.target_device import ITargetDevice
 
 
 class _FakeConfig:
@@ -26,6 +27,8 @@ class _FakeDeviceMonitor:
         self.refresh_all_device_calls = 0
         self.device_sources = []
         self._devices = {}
+        self._simulated_counter = 0
+        self._simulated_objects = {}
 
     def refresh_all_cube(self):
         self.refresh_all_cube_calls += 1
@@ -42,6 +45,27 @@ class _FakeDeviceMonitor:
 
     def register_device_source(self, source):
         self.device_sources.append(source)
+
+    def add_simulated_device(self, status: str):
+        self._simulated_counter += 1
+        serial = f"SIM-{self._simulated_counter:04d}"
+        simulated = ITargetDevice.CreateSimulation(
+            status=status,
+            serial_number=serial,
+            uuid=f"SIM-UUID-{self._simulated_counter:04d}",
+        )
+        self._simulated_objects[serial] = simulated
+        self._devices[serial] = simulated.to_device_info()
+        return simulated.to_device_info()
+
+    def get_simulated_devices(self):
+        return [d.to_device_info() for d in self._simulated_objects.values()]
+
+    def is_simulated_device(self, serial: str):
+        return str(serial or "") in self._simulated_objects
+
+    def get_simulated_device(self, serial: str):
+        return self._simulated_objects.get(str(serial or ""))
 
     def get_device_by_serial(self, serial: str):
         return self._devices.get(serial)
@@ -215,10 +239,8 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
             manager = AuthenticationManager(adb_manager=fake_adb_manager, device_monitor=fake_monitor)
             simulated = manager.add_simulated_device("Unauthorized")
 
-            self.assertEqual(len(fake_monitor.device_sources), 1)
-            polled_devices = fake_monitor.device_sources[0].poll_devices()
-            self.assertEqual(polled_devices[0].serial, simulated.serial)
-            self.assertTrue(polled_devices[0].is_simulation)
+            self.assertTrue(fake_monitor.is_simulated_device(simulated.serial))
+            self.assertEqual(len(fake_monitor.get_simulated_devices()), 1)
 
             result = manager._perform_authentication(simulated.serial, "CUBE-001")
 

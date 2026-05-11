@@ -16,6 +16,10 @@
    - 设备探测阶段新增“设备状态变化”日志，记录 serial、status 与 usb_port 变更
    - `add_simulated_device` 新增关键日志，记录模拟设备 serial、status 与 UUID 就绪情况
 
+4. **模拟设备职责归位到 DeviceMonitor/Main UI**
+   - 模拟设备新增入口由 Main UI 统一调用 `DeviceMonitor.add_simulated_device`
+   - `AuthenticationManager` 不再维护模拟设备新增状态，仅做统一授权流程与设备实例解析
+
 ## v3.1.6 (2026-05-11)
 
 ### 问题修复

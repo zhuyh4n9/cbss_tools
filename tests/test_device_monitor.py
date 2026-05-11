@@ -56,6 +56,16 @@ class TestDeviceMonitorUpdateBehavior(unittest.TestCase):
         monitor._update_device_info()
         self.assertEqual(len(monitor.device_parser.sync_calls), 2)
 
+    @patch("src.device_monitor.ENABLE_SIMULATED_DEVICE", True)
+    @patch("src.device_monitor.DeviceParser", _FakeParser)
+    def test_add_simulated_device_managed_by_monitor(self):
+        monitor = DeviceMonitor(adb_manager=object(), config_manager=_FakeConfig())
+        simulated = monitor.add_simulated_device("Unauthorized")
+
+        self.assertTrue(monitor.is_simulated_device(simulated.serial))
+        self.assertEqual(simulated.detection_method, "Simulation")
+        self.assertEqual(simulated.status, "Unauthorized")
+
 
 if __name__ == "__main__":
     unittest.main()

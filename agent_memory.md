@@ -6,3 +6,4 @@
 - TargetDevice 解析应避免高频重复执行：以 `DeviceMonitor` 连接索引变化为触发点，仅在设备连接状态变化、激活完成后的显式刷新及必要时机触发解析。
 - ADB 设备轮询需保留 `adb devices -l` 的状态字段，供设备状态变化检测与解析节流使用。
 - 设备探测流程需记录必要日志：连接变化 + 状态变化（serial/status/usb_port），并在 `add_simulated_device` 记录模拟设备创建信息，便于现场追踪。
+- 模拟设备新增职责归属 `DeviceMonitor`（由 Main UI 调用），`AuthenticationManager` 仅保留统一授权流程，不直接维护模拟设备新增集合。

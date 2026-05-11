@@ -187,7 +187,8 @@ class AuthenticatorToolGUI:
         )
         tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.clear_logs'), command=self.clear_logs_from_tools_menu)
         tools_menu.add_separator()
-        if self.auth_manager.is_simulated_device_enabled():
+        if self.device_monitor.is_simulated_device_enabled():
+            tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.add_simulated_device'), command=self.show_add_simulated_device_dialog)
             tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.create_simulated_cube'), command=self.show_create_simulated_cube_dialog)
             tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.load_simulated_cube'), command=self.show_load_simulated_cube_dialog)
         # 新增：设备WiFi连接
@@ -1479,6 +1480,35 @@ class AuthenticatorToolGUI:
         """判断UUID是否已准备好"""
         value = (uuid_text or "").strip()
         return value not in ("", "-", "获取中...", "Checking...")
+
+    def show_add_simulated_device_dialog(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title(self.prompt_mgr.get('Dialogs.add_simulated_device_title'))
+        dialog.geometry("360x180")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text=self.prompt_mgr.get('Dialogs.simulated_device_status_label')).pack(anchor='w', pady=(0, 8))
+        status_var = tk.StringVar(value="Unauthorized")
+        status_box = ttk.Combobox(frame, textvariable=status_var, state="readonly", values=["Unauthorized", "Authorized", "Pirated"])
+        status_box.pack(fill=tk.X, pady=(0, 12))
+
+        def do_add():
+            try:
+                simulated = self.device_monitor.add_simulated_device(status_var.get())
+                self.device_monitor.update_devices()
+                self.status_var.set(self.prompt_mgr.format('InfoMessages.simulated_device_added', status=simulated.status))
+                dialog.destroy()
+            except Exception as e:
+                messagebox.showerror(self.prompt_mgr.get('Common.fail_title'), str(e))
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill=tk.X)
+        ttk.Button(btn_frame, text=self.prompt_mgr.get('Buttons.ok'), command=do_add).pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(btn_frame, text=self.prompt_mgr.get('Buttons.cancel'), command=dialog.destroy).pack(side=tk.RIGHT)
 
     def show_create_simulated_cube_dialog(self):
         dialog = tk.Toplevel(self.root)
