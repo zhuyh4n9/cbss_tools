@@ -265,6 +265,12 @@ class AuthenticationManager:
             if not isinstance(device, SimulatorDevice):
                 raise RuntimeError("模拟设备创建失败")
             self._simulated_devices[serial] = device
+            logging.info(
+                "已添加模拟设备: serial=%s, status=%s, uuid_ready=%s",
+                serial,
+                device.getStatus(),
+                bool(device.getUuid()),
+            )
 
         if self._auto_activation_enabled and (device.getStatus() or "").strip().lower() == "unauthorized" and device.getUuid():
             self._on_unauthorized_ready(device.to_device_info())

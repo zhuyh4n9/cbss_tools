@@ -44,6 +44,38 @@ class DeviceMonitor:
         self.cube_refresh_interval = max(self.config.getint('General', 'cube_refresh_interval', 5), 1)
         self._last_cube_refresh_time = 0.0
 
+    @staticmethod
+    def _device_signature(device: DeviceInfo):
+        return (
+            str(device.serial),
+            str(device.status),
+            str(device.usb_port),
+            str(device.detection_method),
+            bool(device.is_simulation),
+        )
+
+    def _has_connected_index_changed(self, new_connected_index: Dict[str, DeviceInfo]) -> bool:
+        if set(self._connected_index.keys()) != set(new_connected_index.keys()):
+            return True
+        for serial, new_device in new_connected_index.items():
+            old_device = self._connected_index.get(serial)
+            if old_device is None:
+                return True
+            if self._device_signature(old_device) != self._device_signature(new_device):
+                return True
+        return False
+
+    def _collect_connected_changes(self, new_connected_index: Dict[str, DeviceInfo]):
+        changed = []
+        for serial in sorted(set(self._connected_index.keys()) & set(new_connected_index.keys())):
+            old_device = self._connected_index.get(serial)
+            new_device = new_connected_index.get(serial)
+            if old_device is None or new_device is None:
+                continue
+            if self._device_signature(old_device) != self._device_signature(new_device):
+                changed.append((old_device, new_device))
+        return changed
+
     def start_monitoring(self):
         """开始设备监控"""
         if self._running:
@@ -153,6 +185,7 @@ class DeviceMonitor:
             current_serials = set(new_connected_index.keys())
             added = sorted(current_serials - previous_serials)
             removed = sorted(previous_serials - current_serials)
+            changed = self._collect_connected_changes(new_connected_index)
             if added or removed:
                 logging.info(
                     "设备连接变化: 新增=%s, 移除=%s, 当前总数=%d",
@@ -160,8 +193,22 @@ class DeviceMonitor:
                     removed or "[]",
                     len(current_serials),
                 )
-            self._connected_index = new_connected_index
-            self.device_parser.sync_connected_devices(list(new_connected_index.values()))
+            if changed:
+                for old_device, new_device in changed:
+                    logging.info(
+                        "设备状态变化: serial=%s, status=%s->%s, usb_port=%s->%s, detection=%s",
+                        new_device.serial,
+                        old_device.status,
+                        new_device.status,
+                        old_device.usb_port,
+                        new_device.usb_port,
+                        new_device.detection_method,
+                    )
+            if self._has_connected_index_changed(new_connected_index):
+                self._connected_index = new_connected_index
+                self.device_parser.sync_connected_devices(list(new_connected_index.values()))
+            else:
+                logging.debug("设备连接状态无变化，跳过TargetDevice重新解析")
 
             # 激活盒子详情由DeviceParser内部CubeManager更新并回调
 

@@ -177,12 +177,13 @@ class ADBManager:
                             parts.append(part)
                     if len(parts) >= 2:
                         serial = parts[0]
+                        status = parts[1]
                         usb_port = ""
                         for part in parts[1:]:
                             if part.startswith('usb:'):
                                 usb_port = part.split(':', 1)[1].strip()
                                 break
-                        devices.append(DeviceInfo(serial=serial, status="", usb_port=usb_port, detection_method="Adb"))
+                        devices.append(DeviceInfo(serial=serial, status=status, usb_port=usb_port, detection_method="Adb"))
             return devices
 
         except Exception as e:
