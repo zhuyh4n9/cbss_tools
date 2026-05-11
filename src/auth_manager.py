@@ -600,7 +600,7 @@ class AuthenticationManager:
             return {serial: cube.to_authenticator_info() for serial, cube in self._simulated_cubes.items()}
 
     def _allocate_simulated_cube_serial(self) -> str:
-        max_attempts = 1_000_000
+        max_attempts = 10_000
         attempts = 0
         while attempts < max_attempts:
             attempts += 1
