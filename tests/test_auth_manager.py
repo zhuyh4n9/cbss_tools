@@ -236,7 +236,7 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         self.assertEqual(fake_monitor.refresh_all_cube_calls, 1)
         self.assertGreater(len(log_output.output), 0)
 
-    def test_pick_authenticator_requires_ready_time_status(self):
+    def test_pick_authenticator_prefers_ready_time_status(self):
         fake_monitor = _FakeDeviceMonitor()
         fake_monitor.authenticators = {
             "CUBE-A": AuthenticatorInfo(serial="CUBE-A", time_status="NotReady"),
@@ -248,6 +248,18 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         picked = manager._pick_authenticator()
 
         self.assertEqual(picked, "CUBE-B")
+
+    def test_pick_authenticator_falls_back_to_available_when_no_ready(self):
+        fake_monitor = _FakeDeviceMonitor()
+        fake_monitor.authenticators = {
+            "CUBE-A": AuthenticatorInfo(serial="CUBE-A", time_status="NotReady"),
+            "CUBE-C": AuthenticatorInfo(serial="CUBE-C", time_status=" pending "),
+        }
+        manager = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=fake_monitor)
+
+        picked = manager._pick_authenticator()
+
+        self.assertEqual(picked, "CUBE-A")
 
     def test_unauthorized_enqueue_clears_auto_completed_flag(self):
         fake_monitor = _FakeDeviceMonitor()

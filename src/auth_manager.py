@@ -214,7 +214,9 @@ class AuthenticationManager:
 
     def _pick_authenticator(self) -> Optional[str]:
         ready_authenticators = []
+        available_authenticators = []
         for serial in self.get_available_authenticators():
+            available_authenticators.append(serial)
             if self.is_simulated_cube(serial):
                 ready_authenticators.append(serial)
                 continue
@@ -223,10 +225,18 @@ class AuthenticationManager:
             if time_status == self._READY_TIME_STATUS:
                 ready_authenticators.append(serial)
 
-        if not ready_authenticators:
-            return None
+        if ready_authenticators:
+            # 固定顺序选择，避免来回切换
+            return sorted(ready_authenticators)[0]
+        if available_authenticators:
+            fallback = sorted(available_authenticators)[0]
+            logging.warning(
+                "未检测到time_status=Ready的Cube，自动授权回退使用可用Cube: %s",
+                fallback,
+            )
+            return fallback
         # 固定顺序选择，避免来回切换
-        return sorted(ready_authenticators)[0]
+        return None
 
     def _is_device_still_unauthorized(self, serial: str) -> bool:
         try:
