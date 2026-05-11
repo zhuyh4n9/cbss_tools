@@ -91,6 +91,8 @@ class TestTargetDeviceFactory(unittest.TestCase):
         self.assertEqual(await_device.to_device_info().status, "Checking...")
         self.assertTrue(await_device.fetch_uuid().success)
         self.assertEqual(await_device.fetch_state().result_data, "Unauthorized")
+        self.assertEqual(await_device.getUuid(), "uuid-2")
+        self.assertEqual(await_device.getStatus(), "Unauthorized")
 
     def test_create_adb_device_as_target(self):
         fake_adb = _FakeAdbManager(uuid_success=True, state_success=True, uuid="uuid-1", state="Unauthorized")

@@ -183,6 +183,7 @@ class TargetDeviceAbstract(ITargetDevice, ABC):
         return CommandResult(success=True, status_code=0, result_data=state, raw_output=state)
 
     def to_await_device(self):
+        """默认await快照：清空UUID并显示Checking状态（SimulatorDevice会覆盖该行为）。"""
         d = self.clone()
         d.setUuid("")
         d.status = "Checking..."
@@ -301,4 +302,4 @@ class UnknownDevice(TargetDeviceAbstract):
         )
 
     def fetch_state(self) -> CommandResult:
-        return CommandResult(success=False, status_code=1, error_message="UnknownDevice state unavailable", raw_output="Unknown")
+        return CommandResult(success=False, status_code=1, error_message="UnknownDevice state unavailable", raw_output="")
