@@ -70,8 +70,6 @@ class DeviceMonitor:
         for serial in sorted(set(self._connected_index.keys()) & set(new_connected_index.keys())):
             old_device = self._connected_index.get(serial)
             new_device = new_connected_index.get(serial)
-            if old_device is None or new_device is None:
-                continue
             if self._device_signature(old_device) != self._device_signature(new_device):
                 changed.append((old_device, new_device))
         return changed

@@ -9,8 +9,9 @@ class TestBuildOptions(unittest.TestCase):
             self.assertTrue(_env_flag_enabled(value))
 
     def test_env_flag_enabled_rejects_non_truthy_values(self):
-        for value in ("0", "false", "off", "", None):
+        for value in ("0", "false", "off", ""):
             self.assertFalse(_env_flag_enabled(value))
+        self.assertFalse(_env_flag_enabled(None))
 
 
 if __name__ == "__main__":
