@@ -518,11 +518,15 @@ class AuthenticationManager:
             return {serial: cube.to_authenticator_info() for serial, cube in self._simulated_cubes.items()}
 
     def _allocate_simulated_cube_serial(self) -> str:
-        while True:
+        max_attempts = 1_000_000
+        attempts = 0
+        while attempts < max_attempts:
+            attempts += 1
             self._simulated_cube_counter += 1
             serial = f"SIM-CUBE-{self._simulated_cube_counter:04d}"
             if serial not in self._simulated_cubes:
                 return serial
+        raise RuntimeError("自动分配模拟Cube序列号失败: 可用序列号已耗尽")
 
     def create_simulated_cube(
         self,
