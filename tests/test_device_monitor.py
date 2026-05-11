@@ -92,6 +92,23 @@ class TestDeviceMonitorUpdateBehavior(unittest.TestCase):
 
     @patch("src.device_monitor.ENABLE_SIMULATED_DEVICE", True)
     @patch("src.device_monitor.DeviceParser", _FakeParser)
+    def test_add_simulated_device_uses_user_serial_and_uuid(self):
+        monitor = DeviceMonitor(adb_manager=object(), config_manager=_FakeConfig())
+        simulated = DeviceMonitor.create_simulated_device(
+            monitor,
+            "Unauthorized",
+            serial_id="SIM-USER-1001",
+            uuid="UUID-USER-1001",
+            fail_on_activate=True,
+        )
+
+        self.assertEqual(simulated.serial, "SIM-USER-1001")
+        self.assertEqual(simulated.uuid, "UUID-USER-1001")
+        target = monitor.get_simulated_device("SIM-USER-1001")
+        self.assertTrue(target.fail_on_activate)
+
+    @patch("src.device_monitor.ENABLE_SIMULATED_DEVICE", True)
+    @patch("src.device_monitor.DeviceParser", _FakeParser)
     def test_remove_simulated_device(self):
         monitor = DeviceMonitor(adb_manager=object(), config_manager=_FakeConfig())
         simulated = DeviceMonitor.create_simulated_device(monitor, "Unauthorized")

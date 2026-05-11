@@ -154,7 +154,12 @@ class DeviceMonitor:
         return ENABLE_SIMULATED_DEVICE
 
     @staticmethod
-    def create_simulated_target_device(status: str, serial_number: str = "") -> SimulatorDevice:
+    def create_simulated_target_device(
+        status: str,
+        serial_number: str = "",
+        uuid: str = "",
+        fail_on_activate: bool = False,
+    ) -> SimulatorDevice:
         status_input = (status or "").strip().lower()
         status_map = {item.lower(): item for item in SIMULATED_DEVICE_STATUS_OPTIONS}
         normalized_status = status_map.get(status_input, "Unauthorized")
@@ -165,16 +170,29 @@ class DeviceMonitor:
         device = ITargetDevice.CreateSimulation(
             status=normalized_status,
             serial_number=serial,
+            uuid=str(uuid or "").strip() or None,
+            fail_on_activate=bool(fail_on_activate),
         )
         if not isinstance(device, SimulatorDevice):
             raise RuntimeError("模拟设备创建失败")
         return device
 
     @staticmethod
-    def create_simulated_device(monitor: "DeviceMonitor", status: str) -> DeviceInfo:
+    def create_simulated_device(
+        monitor: "DeviceMonitor",
+        status: str,
+        serial_id: str = "",
+        uuid: str = "",
+        fail_on_activate: bool = False,
+    ) -> DeviceInfo:
         if monitor is None:
             raise ValueError("monitor cannot be None")
-        return monitor.add_simulated_device(status)
+        return monitor.add_simulated_device(
+            status=status,
+            serial_id=serial_id,
+            uuid=uuid,
+            fail_on_activate=fail_on_activate,
+        )
 
     def is_simulated_device(self, serial: str) -> bool:
         serial = str(serial or "")
@@ -190,20 +208,32 @@ class DeviceMonitor:
         with self._simulated_lock:
             return self._simulated_devices.get(serial)
 
-    def add_simulated_device(self, status: str) -> DeviceInfo:
+    def add_simulated_device(self, status: str, serial_id: str = "", uuid: str = "", fail_on_activate: bool = False) -> DeviceInfo:
         if not self.is_simulated_device_enabled():
             raise RuntimeError("模拟设备功能未启用")
 
         with self._simulated_lock:
-            self._simulated_counter += 1
-            serial = f"SIM-{self._simulated_counter:04d}"
-            device = self.create_simulated_target_device(status=status, serial_number=serial)
+            serial = str(serial_id or "").strip()
+            if not serial:
+                self._simulated_counter += 1
+                serial = f"SIM-{self._simulated_counter:04d}"
+            if serial in self._simulated_devices:
+                raise ValueError(f"模拟设备Serial已存在: {serial}")
+            if serial in self._connected_index:
+                raise ValueError(f"设备Serial已占用: {serial}")
+            device = self.create_simulated_target_device(
+                status=status,
+                serial_number=serial,
+                uuid=str(uuid or "").strip(),
+                fail_on_activate=bool(fail_on_activate),
+            )
             self._simulated_devices[serial] = device
         logging.info(
-            "已添加模拟设备: serial=%s, status=%s, uuid_ready=%s",
+            "已添加模拟设备: serial=%s, status=%s, uuid_ready=%s, fail_on_activate=%s",
             serial,
             device.getStatus(),
             bool(device.getUuid()),
+            bool(getattr(device, "fail_on_activate", False)),
         )
         return device.to_device_info()
 

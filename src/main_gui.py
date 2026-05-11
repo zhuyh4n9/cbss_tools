@@ -1507,6 +1507,9 @@ class AuthenticatorToolGUI:
                 if not self._is_uuid_ready(uuid_text):
                     messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), f"设备 {device_serial} 的UUID尚未获取完成，暂不允许激活")
                     return
+                if self.auth_manager.is_device_activation_blocked(device_serial):
+                    messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self.prompt_mgr.get('Errors.activation_blocked_replug_required'))
+                    return
                 self.authenticate_device(device_serial)
             else:
                 messagebox.showinfo(self.prompt_mgr.get('Common.info_title'), self.prompt_mgr.format('InfoMessages.device_already_activated', device=device_serial))
@@ -1570,7 +1573,7 @@ class AuthenticatorToolGUI:
     def show_add_simulated_device_dialog(self):
         dialog = tk.Toplevel(self.root)
         dialog.title(self.prompt_mgr.get('Dialogs.add_simulated_device_title'))
-        dialog.geometry("360x180")
+        dialog.geometry("420x260")
         dialog.transient(self.root)
         dialog.grab_set()
         self._ensure_dialog_on_main_screen(dialog)
@@ -1583,9 +1586,30 @@ class AuthenticatorToolGUI:
         status_box = ttk.Combobox(frame, textvariable=status_var, state="readonly", values=["Unauthorized", "Authorized", "Pirated"])
         status_box.pack(fill=tk.X, pady=(0, 12))
 
+        ttk.Label(frame, text=self.prompt_mgr.get('Dialogs.simulated_device_serial_label')).pack(anchor='w', pady=(0, 4))
+        serial_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=serial_var).pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame, text=self.prompt_mgr.get('Dialogs.simulated_device_uuid_label')).pack(anchor='w', pady=(0, 4))
+        uuid_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=uuid_var).pack(fill=tk.X, pady=(0, 8))
+
+        fail_on_activate_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            frame,
+            text=self.prompt_mgr.get('Dialogs.simulated_device_fail_on_activate_label'),
+            variable=fail_on_activate_var,
+        ).pack(anchor='w', pady=(0, 8))
+
         def do_add():
             try:
-                simulated = DeviceMonitor.create_simulated_device(self.device_monitor, status_var.get())
+                simulated = DeviceMonitor.create_simulated_device(
+                    self.device_monitor,
+                    status=status_var.get(),
+                    serial_id=serial_var.get().strip(),
+                    uuid=uuid_var.get().strip(),
+                    fail_on_activate=bool(fail_on_activate_var.get()),
+                )
                 self.device_monitor.update_devices()
                 self.status_var.set(self.prompt_mgr.format('InfoMessages.simulated_device_added', status=simulated.status))
                 dialog.destroy()
@@ -1722,6 +1746,9 @@ class AuthenticatorToolGUI:
         uuid_text = self._get_uuid_by_serial_from_tree(device_serial)
         if not self._is_uuid_ready(uuid_text):
             messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), f"设备 {device_serial} 的UUID尚未获取完成，暂不允许激活")
+            return
+        if self.auth_manager.is_device_activation_blocked(device_serial):
+            messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self.prompt_mgr.get('Errors.activation_blocked_replug_required'))
             return
 
         # 获取可用的激活盒子

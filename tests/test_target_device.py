@@ -39,11 +39,33 @@ class TestTargetDeviceFactory(unittest.TestCase):
         self.assertEqual(sim.getStatus(), "Unauthorized")
         self.assertTrue(bool(sim.getUuid()))
 
+    def test_create_simulation_preserves_user_uuid_and_serial(self):
+        sim = ITargetDevice.CreateSimulation(
+            status="unauthorized",
+            serial_number="SIM-USER-0001",
+            uuid="UUID-USER-0001",
+        )
+        self.assertEqual(sim.getSerialNumber(), "SIM-USER-0001")
+        self.assertEqual(sim.getUuid(), "UUID-USER-0001")
+
     def test_simulation_activate_changes_status(self):
         sim = ITargetDevice.CreateSimulation(status="Unauthorized", serial_number="SIM-0002")
         activate_result = sim.activate("dummy")
         self.assertTrue(activate_result.success)
         self.assertEqual(sim.getStatus(), "Authorized")
+
+    def test_simulation_can_force_activation_failure(self):
+        sim = ITargetDevice.CreateSimulation(
+            status="Unauthorized",
+            serial_number="SIM-FAIL-0001",
+            uuid="UUID-FAIL-0001",
+            fail_on_activate=True,
+            failure_reason="SIMULATED_FAIL",
+        )
+        activate_result = sim.activate("dummy")
+        self.assertFalse(activate_result.success)
+        self.assertEqual(activate_result.error_message, "SIMULATED_FAIL")
+        self.assertEqual(sim.getStatus(), "Unauthorized")
 
     def test_create_adb_device_as_target(self):
         fake_adb = _FakeAdbManager(uuid_success=True, state_success=True, uuid="uuid-1", state="Unauthorized")

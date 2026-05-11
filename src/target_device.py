@@ -18,10 +18,18 @@ def _normalize_status(status: str) -> str:
 
 class ITargetDevice(ABC):
     @staticmethod
-    def CreateSimulation(status: str, serial_number: str = "", uuid: Optional[str] = None):
-        serial = (serial_number or "").strip() or "SIM-0000"
+    def CreateSimulation(
+        status: str,
+        serial_number: str = "",
+        uuid: Optional[str] = None,
+        fail_on_activate: bool = False,
+        failure_reason: str = "",
+    ):
+        serial_input = str(serial_number or "").strip()
+        serial = serial_input or "SIM-0000"
         normalized_status = _normalize_status(status)
-        simulation_uuid = uuid or secrets.token_hex(32)
+        uuid_input = str(uuid or "").strip()
+        simulation_uuid = uuid_input or secrets.token_hex(32)
         return SimulatorDevice(
             detection_method="Simulation",
             serial_number=serial,
@@ -29,6 +37,8 @@ class ITargetDevice(ABC):
             uuid=simulation_uuid,
             status=normalized_status,
             usb_port="SIM",
+            fail_on_activate=bool(fail_on_activate),
+            failure_reason=str(failure_reason or ""),
         )
 
     @staticmethod
@@ -169,7 +179,37 @@ class UnknownAdbDevice(IAdbDevice):
 
 
 class SimulatorDevice(TargetDeviceAbstract):
+    def __init__(
+        self,
+        detection_method: str,
+        serial_number: str,
+        is_simulation: bool = True,
+        uuid: str = "",
+        status: str = "Unknown",
+        usb_port: str = "SIM",
+        fail_on_activate: bool = False,
+        failure_reason: str = "",
+    ):
+        super().__init__(
+            detection_method=detection_method,
+            serial_number=serial_number,
+            is_simulation=is_simulation,
+            uuid=uuid,
+            status=status,
+            usb_port=usb_port,
+        )
+        self.fail_on_activate = bool(fail_on_activate)
+        self.failure_reason = str(failure_reason or "")
+
     def activate(self, signature: str) -> CommandResult:
+        if self.fail_on_activate:
+            reason = self.failure_reason or "模拟设备触发激活失败"
+            return CommandResult(
+                success=False,
+                status_code=2,
+                error_message=reason,
+                raw_output="SIMULATED_ACTIVATION_FAILURE",
+            )
         if self.getStatus().lower() != "unauthorized":
             return CommandResult(
                 success=False,

@@ -1,5 +1,6 @@
 import unittest
 import tempfile
+import json
 from unittest.mock import patch
 
 from cryptography.hazmat.primitives import serialization
@@ -33,6 +34,7 @@ class _FakeDeviceMonitor:
         self._devices = {}
         self._simulated_counter = 0
         self._simulated_objects = {}
+        self._callbacks = {"device_update": []}
 
     def refresh_all_cube(self):
         self.refresh_all_cube_calls += 1
@@ -50,15 +52,26 @@ class _FakeDeviceMonitor:
     def register_device_source(self, source):
         self.device_sources.append(source)
 
-    def add_simulated_device(self, status: str):
-        self._simulated_counter += 1
-        serial = f"SIM-{self._simulated_counter:04d}"
+    def add_callback(self, event_type, callback):
+        self._callbacks.setdefault(event_type, []).append(callback)
+
+    def emit_device_update(self, devices):
+        for callback in self._callbacks.get("device_update", []):
+            callback(devices)
+
+    def add_simulated_device(self, status: str, serial_id: str = "", uuid: str = "", fail_on_activate: bool = False):
+        serial = str(serial_id or "").strip()
+        if not serial:
+            self._simulated_counter += 1
+            serial = f"SIM-{self._simulated_counter:04d}"
         status_input = (status or "").strip().lower()
         status_map = {item.lower(): item for item in SIMULATED_DEVICE_STATUS_OPTIONS}
         normalized_status = status_map.get(status_input, "Unauthorized")
         simulated = ITargetDevice.CreateSimulation(
             status=normalized_status,
             serial_number=serial,
+            uuid=uuid or None,
+            fail_on_activate=fail_on_activate,
         )
         self._simulated_objects[serial] = simulated
         self._devices[serial] = simulated.to_device_info()
@@ -281,6 +294,46 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
             self.assertNotIn("get_device_uuid", events)
             self.assertNotIn("verify_device_state", events)
             self.assertEqual(fake_monitor.get_simulated_devices()[0].status, "Authorized")
+
+    def test_failed_activation_is_blocked_until_unplug_and_written_to_critical_log(self):
+        events = []
+        fake_monitor = _FakeDeviceMonitor(events=events)
+        fake_adb_manager = _FakeAdbManager(events=events)
+        manager = AuthenticationManager(adb_manager=fake_adb_manager, device_monitor=fake_monitor)
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch("src.auth_manager.ENABLE_SIMULATED_DEVICE", True):
+            manager._CRITICAL_BUG_LOG_PATH = f"{tmpdir}/critical_bug.log"
+            simulated = fake_monitor.add_simulated_device(
+                status="Unauthorized",
+                serial_id="SIM-FAIL-LOCK-001",
+                uuid="UUID-FAIL-LOCK-001",
+                fail_on_activate=True,
+            )
+
+            first = manager._perform_authentication(simulated.serial, "CUBE-001")
+            second = manager._perform_authentication(simulated.serial, "CUBE-001")
+
+            self.assertFalse(first["success"])
+            self.assertFalse(second["success"])
+            self.assertIn("已锁定", second["message"])
+            self.assertEqual(events.count("authenticator_sign"), 1)
+            self.assertTrue(manager.is_device_activation_blocked(simulated.serial))
+
+            with open(manager._CRITICAL_BUG_LOG_PATH, "r", encoding="utf-8") as f:
+                lines = [line.strip() for line in f.readlines() if line.strip()]
+            self.assertGreaterEqual(len(lines), 1)
+            payload = json.loads(lines[-1])
+            self.assertEqual(payload["serial"], simulated.serial)
+            self.assertEqual(payload["uuid"], "UUID-FAIL-LOCK-001")
+            self.assertTrue(bool(payload["signature"]))
+
+            fake_monitor.emit_device_update([])
+            self.assertFalse(manager.is_device_activation_blocked(simulated.serial))
+
+            fail_sim = fake_monitor.get_simulated_device(simulated.serial)
+            fail_sim.fail_on_activate = False
+            third = manager._perform_authentication(simulated.serial, "CUBE-001")
+            self.assertTrue(third["success"])
 
     def test_create_simulated_cube_uses_icube_factory(self):
         fake_monitor = _FakeDeviceMonitor()

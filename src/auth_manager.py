@@ -7,6 +7,8 @@ import queue
 import threading
 import time
 import os
+import json
+from datetime import datetime
 from typing import List, Optional, Callable, Dict
 from .adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
 from .device_monitor import DeviceMonitor
@@ -17,6 +19,7 @@ from .cube import ICube, RealCube
 
 class AuthenticationManager:
     _READY_TIME_STATUS = "ready"
+    _CRITICAL_BUG_LOG_PATH = os.path.join("logs", "critical_bug.log")
 
     def __init__(self, adb_manager: ADBManager, device_monitor: DeviceMonitor):
         self.adb_manager = adb_manager
@@ -32,15 +35,20 @@ class AuthenticationManager:
         self._in_progress_serials = set()
         self._auto_activation_completed_serials = set()
         self._queue_lock = threading.Lock()
+        self._blocked_lock = threading.Lock()
         self._worker_running = False
         self._worker_thread = None
         self._stop_event = threading.Event()
+        self._blocked_activation_devices: Dict[str, Dict[str, str]] = {}
         self._simulated_lock = threading.Lock()
         self._simulated_cubes: Dict[str, ICube] = {}
         self._simulated_cube_counter = 0
 
         # 始终注册回调，是否入队由开关控制
         self.device_monitor.device_parser.add_callback('unauthorized_ready', self._on_unauthorized_ready)
+        add_callback = getattr(self.device_monitor, "add_callback", None)
+        if callable(add_callback):
+            self.device_monitor.add_callback('device_update', self._on_device_update)
 
         if self._auto_activation_enabled:
             self._start_activate_worker()
@@ -120,6 +128,8 @@ class AuthenticationManager:
             serial = str(device.serial or "").strip()
             if not serial:
                 return
+            if self.is_device_activation_blocked(serial):
+                return
             if not (device.status and device.status.strip().lower() == "unauthorized"):
                 return
             if not device.uuid:
@@ -135,6 +145,56 @@ class AuthenticationManager:
             logging.info(f"未授权设备已加入自动授权队列: {serial}")
         except Exception as e:
             logging.error(f"提交自动授权队列失败: {e}")
+
+    def _on_device_update(self, devices: List[DeviceInfo]):
+        current_serials = {str((d.serial if d else "") or "").strip() for d in (devices or [])}
+        with self._blocked_lock:
+            stale = [serial for serial in self._blocked_activation_devices.keys() if serial not in current_serials]
+            for serial in stale:
+                self._blocked_activation_devices.pop(serial, None)
+                logging.info("检测到设备插拔，已解除激活失败锁定: %s", serial)
+
+    def is_device_activation_blocked(self, serial: str) -> bool:
+        key = str(serial or "").strip()
+        if not key:
+            return False
+        with self._blocked_lock:
+            return key in self._blocked_activation_devices
+
+    def _record_critical_activation_bug(self, serial: str, uuid: str, signature: str, message: str, details: str = ""):
+        payload = {
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "serial": str(serial or ""),
+            "uuid": str(uuid or ""),
+            "signature": str(signature or ""),
+            "message": str(message or ""),
+            "details": str(details or ""),
+        }
+        log_path = self._CRITICAL_BUG_LOG_PATH
+        parent = os.path.dirname(log_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        logging.critical(
+            "CRITICAL BUG: 激活失败设备已锁定，需插拔后重试 serial=%s uuid=%s signature=%s message=%s",
+            payload["serial"],
+            payload["uuid"],
+            payload["signature"],
+            payload["message"],
+        )
+
+    def _mark_activation_failed_and_block(self, serial: str, uuid: str, signature: str, message: str, details: str = ""):
+        with self._blocked_lock:
+            self._blocked_activation_devices[str(serial or "").strip()] = {
+                "uuid": str(uuid or ""),
+                "signature": str(signature or ""),
+                "message": str(message or ""),
+            }
+        try:
+            self._record_critical_activation_bug(serial=serial, uuid=uuid, signature=signature, message=message, details=details)
+        except Exception as e:
+            logging.error("记录CRITICAL BUG日志失败: %s", e)
 
     def _pick_authenticator(self) -> Optional[str]:
         ready_authenticators = []
@@ -364,6 +424,14 @@ class AuthenticationManager:
         """执行单个设备的激活流程"""
         try:
             logging.info(f"开始激活设备: {device_serial}")
+            blocked_msg = "设备上次激活失败，已锁定；请先插拔设备后再尝试激活"
+            if self.is_device_activation_blocked(device_serial):
+                logging.warning("拒绝激活已锁定设备: %s", device_serial)
+                return {
+                    'success': False,
+                    'message': blocked_msg,
+                    'details': ''
+                }
 
             # 步骤1: 获取设备UUID
             cube = self._resolve_cube(authenticator_serial)
@@ -437,6 +505,13 @@ class AuthenticationManager:
             if not activate_result.success:
                 error_msg = f"设备激活失败: {activate_result.error_message}"
                 logging.error(error_msg)
+                self._mark_activation_failed_and_block(
+                    serial=device_serial,
+                    uuid=device_uuid,
+                    signature=signature,
+                    message=error_msg,
+                    details=activate_result.raw_output,
+                )
                 return {
                     'success': False,
                     'message': error_msg,
@@ -475,6 +550,13 @@ class AuthenticationManager:
             else:
                 error_msg = f"设备激活可能失败，状态验证异常: {verify_error}"
                 logging.warning(error_msg)
+                self._mark_activation_failed_and_block(
+                    serial=device_serial,
+                    uuid=device_uuid,
+                    signature=signature,
+                    message=error_msg,
+                    details=verify_output,
+                )
                 return {
                     'success': False,
                     'message': error_msg,
