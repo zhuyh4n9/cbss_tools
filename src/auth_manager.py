@@ -400,6 +400,12 @@ class AuthenticationManager:
             return self._perform_authentication(device_serial, authenticator_serial, progress_callback)
         finally:
             self._is_authenticating = False
+            try:
+                refresh_device = getattr(self.device_monitor, "refresh_device", None)
+                if callable(refresh_device):
+                    refresh_device(device_serial)
+            except Exception as refresh_error:
+                logging.warning("授权后刷新设备状态失败: %s", refresh_error)
 
     def authenticate_all_devices(self, authenticator_serial: str,
                                progress_callback: Optional[Callable] = None) -> dict:
@@ -695,14 +701,22 @@ class AuthenticationManager:
     def perform_cube_operation(self, operation: str, serial: str, payload: str):
         cube = self._resolve_cube(serial)
         if operation == 'lock':
-            return cube.lock(payload)
-        if operation == 'unlock':
-            return cube.unlock(payload)
-        if operation == 'activate':
-            return cube.activate(payload)
-        if operation == 'config':
-            return cube.config(payload)
-        raise ValueError(f"Unsupported cube operation: {operation}")
+            result = cube.lock(payload)
+        elif operation == 'unlock':
+            result = cube.unlock(payload)
+        elif operation == 'activate':
+            result = cube.activate(payload)
+        elif operation == 'config':
+            result = cube.config(payload)
+        else:
+            raise ValueError(f"Unsupported cube operation: {operation}")
+
+        if result and result.success:
+            try:
+                self.device_monitor.refresh_all_cube()
+            except Exception as refresh_error:
+                logging.warning("Cube操作后刷新信息失败: %s", refresh_error)
+        return result
 
     def _resolve_cube(self, serial: str) -> ICube:
         serial = str(serial or "").strip()

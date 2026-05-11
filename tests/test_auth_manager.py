@@ -143,6 +143,22 @@ class _FakeAdbManager:
         self.events.append("precheck_device_state")
         return CommandResult(success=True, status_code=0, result_data="Unauthorized", raw_output="Unauthorized")
 
+    def authenticator_lock(self, authenticator_serial: str, token: str):
+        self.events.append("authenticator_lock")
+        return CommandResult(success=True, status_code=0, result_data="ok", raw_output="ok")
+
+    def authenticator_unlock(self, authenticator_serial: str, token: str):
+        self.events.append("authenticator_unlock")
+        return CommandResult(success=True, status_code=0, result_data="ok", raw_output="ok")
+
+    def authenticator_activate(self, authenticator_serial: str, token: str):
+        self.events.append("authenticator_activate")
+        return CommandResult(success=True, status_code=0, result_data="ok", raw_output="ok")
+
+    def authenticator_config(self, authenticator_serial: str, config: str):
+        self.events.append("authenticator_config")
+        return CommandResult(success=True, status_code=0, result_data="ok", raw_output="ok")
+
 
 class _TestableAuthenticationManager(AuthenticationManager):
     TEST_SERIAL = "DEV-001"
@@ -305,6 +321,28 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertEqual(fake_monitor.refresh_all_cube_calls, 1)
         self.assertGreater(len(log_output.output), 0)
+
+    def test_authenticate_device_refreshes_target_device_state(self):
+        fake_monitor = _FakeDeviceMonitor()
+        fake_adb_manager = _FakeAdbManager()
+        manager = AuthenticationManager(adb_manager=fake_adb_manager, device_monitor=fake_monitor)
+
+        result = manager.authenticate_device("DEV-001", "CUBE-001")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(fake_monitor.refresh_device_calls, ["DEV-001"])
+
+    def test_cube_operation_success_refreshes_cube_info(self):
+        events = []
+        fake_monitor = _FakeDeviceMonitor(events=events)
+        fake_adb_manager = _FakeAdbManager(events=events)
+        manager = AuthenticationManager(adb_manager=fake_adb_manager, device_monitor=fake_monitor)
+
+        result = manager.perform_cube_operation("activate", "CUBE-001", "TOKEN")
+
+        self.assertTrue(result.success)
+        self.assertIn("authenticator_activate", events)
+        self.assertEqual(fake_monitor.refresh_all_cube_calls, 1)
 
     def test_pick_authenticator_prefers_ready_time_status(self):
         fake_monitor = _FakeDeviceMonitor()
