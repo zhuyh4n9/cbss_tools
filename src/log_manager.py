@@ -198,15 +198,13 @@ class LogManager:
                         records = json.load(f)
                 except Exception:
                     records = []
-            records.append(record)
-            self._auth_record_count = len(records)
             if self._auth_record_count >= self._MAX_RECORDS_PER_FILE:
                 self._auth_file_index += 1
                 self._auth_record_count = 0
                 filepath = os.path.join(base_dir, f'authorization_{self._auth_file_index:06d}.json')
                 records = []
-                records.append(record)
-                self._auth_record_count = 1
+            records.append(record)
+            self._auth_record_count = len(records)
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(records, f, ensure_ascii=False, indent=2)
 

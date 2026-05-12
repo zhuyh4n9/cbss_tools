@@ -16,8 +16,8 @@
    - 仅 `_monitor_loop` 调用 `_update_device_info` 轮询各 Detector 的 `poll_changes()`
    - 仅将增删变化（`added`/`removed`）传递给 `sync_connected_devices`，不刷新全部设备
 3. **设备分类**：`DeviceParser` 将序列号分流为 authenticator / target，维护 `await/ready` 队列。
-   - `_to_target_device` 不区分 sim/adb 类型，统一创建 `UnknownDevice`/`UnknownAdbDevice`
-   - `DeviceClassificationStrategy.classify_device` 负责创建 `SimulatorDevice`（含 `simulate_activate_failure`）
+   - `_to_target_device` 会按设备来源创建对象：ADB 设备创建 `UnknownAdbDevice`，模拟设备直接创建 `SimulatorDevice`
+   - `DeviceClassificationStrategy.classify_device` 负责后续分类与状态刷新流程
    - 分类完成后在 worker loop 中 `markDirty(kick)`，触发 `refreshDeviceMeta` 获取元信息
    - `refreshDeviceMeta` 前后记录 INFO 日志
 4. **认证器快照**：`CubeManager` 周期刷新 `snapshot`（仅 Cube，不刷新 target 设备）。

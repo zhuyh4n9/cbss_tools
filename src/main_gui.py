@@ -480,7 +480,7 @@ class AuthenticatorToolGUI:
     def update_authenticator_display(self, authenticators: Dict[str, AuthenticatorInfo]):
         """更新激活盒子显示"""
         def update_ui():
-            # simulated cubes are already merged into authenticators by auth_manager
+            # simulated cubes are already merged by device_monitor
             merged_authenticators = dict(authenticators or {})
             self._update_auto_auth_ui_state(len(merged_authenticators))
             # 更新激活盒子选择器
@@ -1469,29 +1469,28 @@ class AuthenticatorToolGUI:
             return
         item = self.device_tree.item(selection[0])
         device_serial = item['values'][0].split('serial:')[-1] if 'serial:' in str(item['values'][0]) else str(item['values'][0])
+        device_info = self.device_monitor.get_device_by_serial(device_serial)
+        is_simulation = bool(device_info and (device_info.is_simulation or str(device_info.detection_method or "").lower() == "simulator"))
         # 仅模拟设备支持右键移除
-        if not device_serial.startswith('SIM-'):
+        if not is_simulation:
             return
 
         menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="移除模拟设备", command=lambda: self._remove_simulated_device(device_serial))
+        menu.add_command(label=self.prompt_mgr.get('Dialogs.simulated_device_remove_menu'),
+                         command=lambda: self._remove_simulated_device(device_serial))
         menu.post(event.x_root, event.y_root)
 
     def _remove_simulated_device(self, serial: str):
         """移除模拟设备（模拟设备重新插拔）"""
-        if not messagebox.askyesno("确认", f"确认移除模拟设备 {serial}？\n重新添加后状态将刷新。"):
+        if not messagebox.askyesno(
+                self.prompt_mgr.get('Common.confirm_title'),
+                self.prompt_mgr.format('Dialogs.simulated_device_remove_confirm', serial=serial)):
             return
-        # 通过detector上报移除事件
-        sim_det = self.device_monitor._find_detector("Simulator")
-        if sim_det is not None:
-            sim_det.remove_device(str(serial))
-        # 从_connected_index和target_devices移除
-        self.device_monitor._connected_index.pop(str(serial), None)
-        self.device_monitor.target_devices = [
-            d for d in self.device_monitor.target_devices if d.serial != serial
-        ]
-        self.update_device_display(self.device_monitor.target_devices)
-        self.status_var.set(f"模拟设备已移除: {serial}")
+        if self.device_monitor.remove_simulated_device(str(serial)):
+            self.status_var.set(self.prompt_mgr.format('InfoMessages.simulated_device_removed', serial=serial))
+            return
+        messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'),
+                               self.prompt_mgr.format('Errors.simulated_device_not_found', serial=serial))
 
     def show_add_simulated_device_dialog(self):
         """显示添加模拟设备弹窗"""
@@ -1519,18 +1518,18 @@ class AuthenticatorToolGUI:
         status_combo.grid(row=0, column=1, sticky='we', pady=4)
 
         # UUID（可选）
-        ttk.Label(fields, text="UUID (可选):").grid(row=1, column=0, sticky='w', pady=4)
+        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.simulated_device_uuid_optional_label')).grid(row=1, column=0, sticky='w', pady=4)
         uuid_var = tk.StringVar()
         ttk.Entry(fields, textvariable=uuid_var, width=38).grid(row=1, column=1, sticky='we', pady=4)
 
         # Serial ID（可选）
-        ttk.Label(fields, text="Serial ID (可选):").grid(row=2, column=0, sticky='w', pady=4)
+        ttk.Label(fields, text=self.prompt_mgr.get('Dialogs.simulated_device_serial_optional_label')).grid(row=2, column=0, sticky='w', pady=4)
         serial_var = tk.StringVar()
         ttk.Entry(fields, textvariable=serial_var, width=38).grid(row=2, column=1, sticky='we', pady=4)
 
         # 模拟激活失败
         failure_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(fields, text="Simulation activate Failure", variable=failure_var).grid(row=3, column=0, columnspan=2, sticky='w', pady=8)
+        ttk.Checkbutton(fields, text=self.prompt_mgr.get('Dialogs.simulated_device_activate_failure_label'), variable=failure_var).grid(row=3, column=0, columnspan=2, sticky='w', pady=8)
         fields.columnconfigure(1, weight=1)
 
         def on_confirm():
@@ -1852,7 +1851,7 @@ class AuthenticatorToolGUI:
             self.device_monitor.mark_device_dirty(device_serial)
             self.device_monitor.refresh_all_cube()
         else:
-            self.device_monitor._mark_all_devices_dirty()
+            self.device_monitor.mark_all_devices_dirty()
 
     # 诊断日志功能方法 (NEW in Update 2)
     def get_token_diagnostic(self):

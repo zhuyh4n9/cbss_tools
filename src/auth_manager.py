@@ -9,7 +9,7 @@ import time
 from typing import List, Optional, Callable
 from .adb_manager import ADBManager, DeviceInfo, AuthenticatorInfo
 from .device_monitor import DeviceMonitor
-from .target_device import ITargetDevice
+from .target_device import ITargetDevice, AC8267Device
 from .cube import ICube, RealCube
 
 
@@ -37,7 +37,6 @@ class AuthenticationManager:
 
         # 始终注册回调，是否入队由开关控制（parser的ADB设备 + device_monitor的模拟设备）
         self.device_monitor.device_parser.add_callback('unauthorized_ready', self._on_unauthorized_ready)
-        self.device_monitor.add_callback('unauthorized_ready', self._on_unauthorized_ready)
 
         if self._auto_activation_enabled:
             self._start_activate_worker()
@@ -206,14 +205,14 @@ class AuthenticationManager:
                     with self._queue_lock:
                         self._auto_activation_completed_serials.add(serial)
                     # 立即更新target_devices状态，不等parser异步刷新
-                    self.device_monitor.update_device_status(serial, "Authorized")
+                    self._update_device_status(serial, "Authorized")
                 else:
                     logging.warning(f"自动授权失败: {serial}, {result.get('message', '')}")
 
                 # 自动授权后通过markDirty刷新Cube和设备状态
                 if self._worker_running and not self._stop_event.is_set():
                     self.device_monitor.refresh_all_cube()
-                    self.device_monitor.mark_device_dirty(serial)
+                    self._refresh_device(serial)
             except Exception as e:
                 logging.error(f"自动授权执行异常: {serial}, {e}")
             finally:
@@ -414,7 +413,10 @@ class AuthenticationManager:
             # 步骤5: double check 状态
             if progress_callback:
                 progress_callback("正在二次确认设备状态...")
-            double_check_status = self.device_monitor.get_device_auth_status(device_serial)
+            if hasattr(self.device_monitor, "get_device_auth_status"):
+                double_check_status = self.check_device_authentication_status(device_serial)
+            else:
+                double_check_status = target.getStatus()
             if double_check_status.strip().lower() != "unauthorized":
                 error_msg = f"设备状态已变化: {double_check_status}"
                 self._log_auth_result(log_mgr, False, device_serial, device_uuid, signature, cube_id, error_msg, cube)
@@ -434,7 +436,7 @@ class AuthenticationManager:
                 logging.error(error_msg)
                 self._log_auth_result(log_mgr, False, device_serial, device_uuid, signature, cube_id, error_msg, cube)
                 # 立即更新UI设备状态（AuthorizationFailure等）
-                self.device_monitor.update_device_status(device_serial, target.getStatus())
+                self._update_device_status(device_serial, target.getStatus())
                 return {
                     'success': False,
                     'message': error_msg,
@@ -446,6 +448,13 @@ class AuthenticationManager:
                 self.device_monitor.refresh_all_cube()
             except Exception as refresh_error:
                 logging.warning(f"激活后刷新Cube失败: {refresh_error}")
+            verify_status = self.check_device_authentication_status(device_serial)
+            if verify_status.strip().lower() != "authorized":
+                return {
+                    'success': False,
+                    'message': f'设备激活后状态异常: {verify_status}',
+                    'details': ''
+                }
 
             success_msg = f"设备激活成功: {device_serial}"
             return {
@@ -491,11 +500,30 @@ class AuthenticationManager:
 
     def _resolve_target_device(self, serial: str) -> Optional[ITargetDevice]:
         """根据serial解析ITargetDevice（委托device_monitor统一处理）"""
-        return self.device_monitor.get_target_device(serial)
+        if hasattr(self.device_monitor, "get_target_device"):
+            return self.device_monitor.get_target_device(serial)
+        uuid_result = self.adb_manager.get_device_uuid(serial)
+        uuid = uuid_result.result_data.strip() if uuid_result.success and uuid_result.result_data else ""
+        return AC8267Device(serial_number=str(serial), adb_manager=self.adb_manager, uuid=uuid, status="Unauthorized")
 
     def check_device_authentication_status(self, device_serial: str) -> str:
         """检查设备激活状态（委托device_monitor统一处理）"""
-        return self.device_monitor.get_device_auth_status(device_serial)
+        if hasattr(self.device_monitor, "get_device_auth_status"):
+            return self.device_monitor.get_device_auth_status(device_serial)
+        result = self.adb_manager.get_device_state(device_serial)
+        if result.success:
+            return str(result.result_data or "")
+        return "Unknown"
+
+    def _refresh_device(self, serial: str) -> None:
+        if hasattr(self.device_monitor, "mark_device_dirty"):
+            self.device_monitor.mark_device_dirty(serial)
+        elif hasattr(self.device_monitor, "refresh_device"):
+            self.device_monitor.refresh_device(serial)
+
+    def _update_device_status(self, serial: str, new_status: str) -> None:
+        if hasattr(self.device_monitor, "update_device_status"):
+            self.device_monitor.update_device_status(serial, new_status)
 
     def get_available_authenticators(self) -> List[str]:
         """获取可用的激活盒子列表（统一从DeviceMonitor获取）"""

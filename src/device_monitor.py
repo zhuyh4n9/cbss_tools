@@ -288,11 +288,21 @@ class DeviceMonitor:
     def refresh_devices(self):
         """手动刷新全部设备（用户按钮触发）"""
         try:
-            for d in list(self.device_parser._ready_queue.values()):
+            with self.device_parser._lock:
+                devices = list(self.device_parser._ready_queue.values()) + list(self.device_parser._await_queue.values())
+            for d in devices:
                 d.markDirty()
             self.device_parser.kick()
         except Exception as e:
             logging.error(f"手动刷新设备失败: {e}")
+
+    def mark_all_devices_dirty(self):
+        """标记全部设备dirty并kick parser刷新"""
+        self.refresh_devices()
+
+    def _mark_all_devices_dirty(self):
+        """兼容旧调用：标记全部设备dirty并kick parser刷新"""
+        self.mark_all_devices_dirty()
 
     def mark_device_dirty(self, serial: str):
         """标记单个设备dirty并kick parser刷新"""
@@ -360,7 +370,9 @@ class DeviceMonitor:
 
     def _get_target_from_parser(self, serial: str):
         """从parser的ready/await队列中查找TargetDeviceAbstract"""
-        for d in list(self.device_parser._ready_queue.values()) + list(self.device_parser._await_queue.values()):
+        with self.device_parser._lock:
+            devices = list(self.device_parser._ready_queue.values()) + list(self.device_parser._await_queue.values())
+        for d in devices:
             if d.getSerialNumber() == serial:
                 return d
         return None
@@ -392,8 +404,22 @@ class DeviceMonitor:
         if sim_det is None:
             raise RuntimeError("SimulatorDeviceDetector not found")
         device_info = sim_det.add_device(status, uuid=uuid, serial_number=serial_number,
-                                          simulate_activate_failure=simulate_activate_failure)
+                                           simulate_activate_failure=simulate_activate_failure)
         return device_info
+
+    def remove_simulated_device(self, serial: str) -> bool:
+        """移除模拟设备并同步刷新 detector→parser→UI"""
+        serial = str(serial or "").strip()
+        if not serial:
+            return False
+        sim_det = self._find_detector("Simulator")
+        if sim_det is None:
+            return False
+        if isinstance(sim_det, SimulatorDeviceDetector) and sim_det.get_device(serial) is None:
+            return False
+        sim_det.remove_device(serial)
+        self._update_device_info()
+        return True
 
     def is_simulated_cube(self, serial: str) -> bool:
         return str(serial or "") in self._simulated_cubes
