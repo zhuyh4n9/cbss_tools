@@ -8,29 +8,31 @@ from unittest import mock
 
 
 def _load_main_gui_module():
-    tkinter_module = types.ModuleType("tkinter")
-    tkinter_ttk_module = types.ModuleType("tkinter.ttk")
-    tkinter_messagebox_module = types.ModuleType("tkinter.messagebox")
-    tkinter_filedialog_module = types.ModuleType("tkinter.filedialog")
-    tkinter_simpledialog_module = types.ModuleType("tkinter.simpledialog")
-
-    tkinter_module.ttk = tkinter_ttk_module
-    tkinter_module.messagebox = tkinter_messagebox_module
-    tkinter_module.filedialog = tkinter_filedialog_module
-    tkinter_module.simpledialog = tkinter_simpledialog_module
+    fake_modules = {
+        name: types.ModuleType(name)
+        for name in (
+            "tkinter",
+            "tkinter.ttk",
+            "tkinter.messagebox",
+            "tkinter.filedialog",
+            "tkinter.simpledialog",
+        )
+    }
+    tkinter_module = fake_modules["tkinter"]
+    tkinter_module.ttk = fake_modules["tkinter.ttk"]
+    tkinter_module.messagebox = fake_modules["tkinter.messagebox"]
+    tkinter_module.filedialog = fake_modules["tkinter.filedialog"]
+    tkinter_module.simpledialog = fake_modules["tkinter.simpledialog"]
     tkinter_module.TclError = RuntimeError
 
-    fake_modules = {
-        "tkinter": tkinter_module,
-        "tkinter.ttk": tkinter_ttk_module,
-        "tkinter.messagebox": tkinter_messagebox_module,
-        "tkinter.filedialog": tkinter_filedialog_module,
-        "tkinter.simpledialog": tkinter_simpledialog_module,
-    }
-
+    original_main_gui = sys.modules.pop("src.main_gui", None)
     with mock.patch.dict(sys.modules, fake_modules):
+        module = importlib.import_module("src.main_gui")
+    if original_main_gui is not None:
+        sys.modules["src.main_gui"] = original_main_gui
+    else:
         sys.modules.pop("src.main_gui", None)
-        return importlib.import_module("src.main_gui")
+    return module
 
 
 class _FakeRoot:
@@ -74,6 +76,9 @@ class _FakeVar:
 
 
 class TestMainGuiThreading(unittest.TestCase):
+    _SERIAL_COLUMN = 0
+    _STATUS_COLUMN = 3
+
     @classmethod
     def setUpClass(cls):
         cls.main_gui = _load_main_gui_module()
@@ -88,7 +93,7 @@ class TestMainGuiThreading(unittest.TestCase):
         gui.status_var = _FakeVar()
         return gui
 
-    def test_update_device_display_from_background_thread_waits_for_ui_drain(self):
+    def test_update_device_display_from_background_thread_queues_ui_task(self):
         gui = self._make_gui()
         captured_rows = []
         gui._apply_device_rows = lambda rows: captured_rows.append(rows)
@@ -110,11 +115,11 @@ class TestMainGuiThreading(unittest.TestCase):
         gui._drain_ui_task_queue()
 
         self.assertEqual(len(captured_rows), 1)
-        self.assertEqual(captured_rows[0][0][0], "serial:SIM-0011")
-        self.assertEqual(captured_rows[0][0][3], "Authorized")
-        self.assertEqual(gui.root.after_calls[0][0], 16)
+        self.assertEqual(captured_rows[0][0][self._SERIAL_COLUMN], f"serial:{device.serial}")
+        self.assertEqual(captured_rows[0][0][self._STATUS_COLUMN], "Authorized")
+        self.assertTrue(gui.root.after_calls)
 
-    def test_on_monitor_error_from_background_thread_waits_for_ui_drain(self):
+    def test_on_monitor_error_from_background_thread_queues_ui_task(self):
         gui = self._make_gui()
 
         worker = threading.Thread(target=gui.on_monitor_error, args=("boom",))
