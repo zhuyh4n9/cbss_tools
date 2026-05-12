@@ -92,7 +92,7 @@ class ITargetDevice(ABC):
 
     @abstractmethod
     def markDirty(self, parser_kick=None) -> None:
-        """标记设备状态不可信，若未锁定则设为dirty并kick parser刷新"""
+        """标记设备状态不可信，若未锁定则设为dirty并触发parser异步刷新"""
         pass
 
     @abstractmethod
@@ -167,7 +167,7 @@ class TargetDeviceAbstract(ITargetDevice, ABC):
     # ---- Dirty / Lock 状态管理 ----
 
     def markDirty(self, parser_kick=None) -> None:
-        """标记设备状态不可信，若未锁定则设为dirty并kick parser刷新"""
+        """标记设备状态不可信，若未锁定则设为dirty并触发parser异步刷新"""
         if self._locked:
             self._pending_dirty = True
             return

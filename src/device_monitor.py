@@ -289,10 +289,13 @@ class DeviceMonitor:
         """手动刷新全部设备（用户按钮触发）"""
         try:
             with self.device_parser._lock:
-                devices = list(self.device_parser._ready_queue.values()) + list(self.device_parser._await_queue.values())
-            for d in devices:
+                devices = (
+                    [(serial, dev) for serial, dev in self.device_parser._ready_queue.items()] +
+                    [(serial, dev) for serial, dev in self.device_parser._await_queue.items()]
+                )
+            for _, d in devices:
                 d.markDirty()
-            self.device_parser.kick()
+            self.device_parser.kick_trigger()
         except Exception as e:
             logging.error(f"手动刷新设备失败: {e}")
 
@@ -304,7 +307,7 @@ class DeviceMonitor:
         """标记单个设备dirty并kick parser刷新"""
         target = self._get_target_from_parser(str(serial))
         if target is not None:
-            target.markDirty(self.device_parser.kick)
+            target.markDirty(lambda serial=str(serial): self.device_parser.kick_trigger(serial))
 
     def reparse_device(self, serial: str):
         """激活后重新获取设备状态：保留当前状态进入await，解析器重新拉取后更新"""

@@ -7,7 +7,7 @@ import copy
 import logging
 import threading
 import time
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Optional
 
 from .adb_manager import ADBManager, DeviceInfo
 from .device_classification_strategy import DeviceClassificationStrategy
@@ -23,6 +23,8 @@ class DeviceParser:
         self._ready_queue: Dict[str, TargetDeviceAbstract] = {}
         self._base_devices: Dict[str, TargetDeviceAbstract] = {}
         self._classify_queue: List[str] = []
+        self._kick_queue: List[str] = []
+        self._kick_refreshing: Dict[str, TargetDeviceAbstract] = {}
         self._order: List[str] = []
         self._classification_strategy = DeviceClassificationStrategy(self.adb_manager)
 
@@ -47,34 +49,76 @@ class DeviceParser:
         self._notify_callbacks('authenticator_update', cubes)
         self._notify_callbacks('authenticator_serials_update', list(cubes.keys()))
 
-    def kick(self):
-        """遍历全部设备，寻找dirty状态设备，执行refreshDeviceMeta"""
+    def kick_trigger(self, serial: Optional[str] = None):
+        """异步触发worker刷新dirty设备，并先通知UI设备进入刷新态"""
+        should_notify = False
         with self._lock:
-            dirty_serials = []
-            for serial, dev in self._ready_queue.items():
-                if dev.isDirty():
-                    dirty_serials.append(serial)
-            for serial, dev in self._await_queue.items():
-                if dev.isDirty():
-                    dirty_serials.append(serial)
+            if serial is None:
+                dirty_serials = [
+                    item_serial
+                    for item_serial, dev in self._ready_queue.items()
+                    if dev.isDirty()
+                ]
+                dirty_serials.extend(
+                    item_serial
+                    for item_serial, dev in self._await_queue.items()
+                    if dev.isDirty() and item_serial not in dirty_serials
+                )
+            else:
+                dirty_serials = [str(serial)]
 
-        for serial in dirty_serials:
+            for dirty_serial in dirty_serials:
+                if dirty_serial in self._ready_queue and dirty_serial not in self._kick_refreshing:
+                    current = self._ready_queue.pop(dirty_serial)
+                    self._kick_refreshing[dirty_serial] = current
+                    self._await_queue[dirty_serial] = self._make_await_device(current)
+                    should_notify = True
+                elif dirty_serial in self._kick_refreshing:
+                    should_notify = True
+
+                if dirty_serial in self._kick_refreshing and dirty_serial not in self._kick_queue:
+                    self._kick_queue.append(dirty_serial)
+
+        if should_notify:
+            self._notify_callbacks('device_update', self.get_devices())
+        self._wake_event.set()
+
+    def _kick(self, serial: Optional[str] = None):
+        """同步执行refreshDeviceMeta，仅worker线程调用"""
+        if serial is None:
             with self._lock:
-                dev = self._ready_queue.get(serial) or self._await_queue.get(serial)
+                serials = list(self._kick_queue)
+        else:
+            serials = [str(serial)]
+
+        processed_serials = []
+        for refresh_serial in serials:
+            with self._lock:
+                dev = self._kick_refreshing.get(refresh_serial)
+                if dev is None:
+                    dev = self._ready_queue.get(refresh_serial) or self._await_queue.get(refresh_serial)
             if dev is None:
                 continue
             try:
-                logging.info(f"refreshDeviceMeta 开始 [{serial}]")
+                logging.info(f"refreshDeviceMeta 开始 [{refresh_serial}]")
                 dev.refreshDeviceMeta()
-                logging.info(f"refreshDeviceMeta 完成 [{serial}], status={dev.getStatus()}, uuid={dev.getUuid()[:16] if dev.getUuid() else ''}...")
+                logging.info(f"refreshDeviceMeta 完成 [{refresh_serial}], status={dev.getStatus()}, uuid={dev.getUuid()[:16] if dev.getUuid() else ''}...")
             except Exception as e:
-                logging.error(f"refreshDeviceMeta 失败 [{serial}]: {e}")
+                logging.error(f"refreshDeviceMeta 失败 [{refresh_serial}]: {e}")
 
-        if dirty_serials:
+            with self._lock:
+                self._kick_queue = [item for item in self._kick_queue if item != refresh_serial]
+                self._await_queue.pop(refresh_serial, None)
+                self._kick_refreshing.pop(refresh_serial, None)
+                if refresh_serial in self._base_devices:
+                    self._ready_queue[refresh_serial] = dev
+                    processed_serials.append(refresh_serial)
+
+        if processed_serials:
             self._notify_callbacks('device_update', self.get_devices())
-            for serial in dirty_serials:
+            for processed_serial in processed_serials:
                 with self._lock:
-                    dev = self._ready_queue.get(serial)
+                    dev = self._ready_queue.get(processed_serial)
                 if dev is not None and not dev.isDirty():
                     if dev.getStatus().strip().lower() == "unauthorized" and dev.getUuid():
                         if not getattr(dev, '_submitted', False):
@@ -197,6 +241,8 @@ class DeviceParser:
                 self._base_devices.pop(serial, None)
                 self._await_queue.pop(serial, None)
                 self._ready_queue.pop(serial, None)
+                self._kick_refreshing.pop(serial, None)
+                self._kick_queue = [s for s in self._kick_queue if s != serial]
                 self._classify_queue = [s for s in self._classify_queue if s != serial]
                 self._order = [s for s in self._order if s != serial]
                 self.cube_manager.remove_cube(serial)
@@ -226,6 +272,8 @@ class DeviceParser:
             in_target = serial in self._await_queue or serial in self._ready_queue
             self._await_queue.pop(serial, None)
             self._ready_queue.pop(serial, None)
+            self._kick_refreshing.pop(serial, None)
+            self._kick_queue = [s for s in self._kick_queue if s != serial]
             self._classify_queue = [s for s in self._classify_queue if s != serial]
             self._order = [s for s in self._order if s != serial]
 
@@ -307,6 +355,12 @@ class DeviceParser:
                 return self._classify_queue.pop(0)
         return None
 
+    def _next_kick_serial(self):
+        with self._lock:
+            if self._kick_queue:
+                return self._kick_queue.pop(0)
+        return None
+
     def _next_await_serial(self):
         with self._lock:
             for serial in self._order:
@@ -326,7 +380,7 @@ class DeviceParser:
                     if not base:
                         continue
 
-                    decision = self._classification_strategy.classify_device(classify_serial, base, known_cube, self.kick)
+                    decision = self._classification_strategy.classify_device(classify_serial, base, known_cube, self._kick)
 
                     with self._lock:
                         base = self._base_devices.get(classify_serial)
@@ -352,9 +406,14 @@ class DeviceParser:
                         self.cube_manager.add_cube(classify_serial)
 
                     self._notify_callbacks('device_update', self.get_devices())
-                    # 设备已在_ready_queue中，此时markDirty触发kick→refreshDeviceMeta→unauthorized_ready
+                    # 设备已在_ready_queue中，此时markDirty触发kick_trigger，由worker异步refreshDeviceMeta
                     if decision.ready_device is not None:
-                        decision.ready_device.markDirty(self.kick)
+                        decision.ready_device.markDirty(lambda serial=classify_serial: self.kick_trigger(serial))
+                    continue
+
+                kick_serial = self._next_kick_serial()
+                if kick_serial:
+                    self._kick(kick_serial)
                     continue
 
                 serial = self._next_await_serial()

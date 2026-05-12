@@ -18,7 +18,7 @@
 3. **设备分类**：`DeviceParser` 将序列号分流为 authenticator / target，维护 `await/ready` 队列。
    - `_to_target_device` 会按设备来源创建对象：ADB 设备创建 `UnknownAdbDevice`，模拟设备直接创建 `SimulatorDevice`
    - `DeviceClassificationStrategy.classify_device` 负责后续分类与状态刷新流程
-   - 分类完成后在 worker loop 中 `markDirty(kick)`，触发 `refreshDeviceMeta` 获取元信息
+   - 分类完成后在 worker loop 中 `markDirty(kick_trigger)`，仅触发异步刷新；真正的 `refreshDeviceMeta` 在 parser worker 内执行
    - `refreshDeviceMeta` 前后记录 INFO 日志
 4. **认证器快照**：`CubeManager` 周期刷新 `snapshot`（仅 Cube，不刷新 target 设备）。
 5. **授权流程**：`AuthenticationManager._perform_authentication()` 执行：
@@ -28,7 +28,7 @@
    - 失败记录写入 `detailed_info/failure/`，含 Cube status/expire
 6. **刷新机制**（仅通过 `markDirty` 触发）：
    - 新增设备 → `markDirty`（worker loop 中）
-   - 用户按钮刷新 → 全部设备 `markDirty` + `kick`
+   - 用户按钮刷新 → 全部设备 `markDirty` + `kick_trigger`
    - 授权完成/失败 → `mark_device_dirty(serial)`
    - `_submitted` 标记防止重复加入自动授权队列
 
