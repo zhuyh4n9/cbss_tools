@@ -4,6 +4,7 @@
 """
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+import queue
 import threading
 import os
 import sys
@@ -83,12 +84,14 @@ NETWORK_MONITOR_THREAD_JOIN_TIMEOUT = 0.1
 class AuthenticatorToolGUI:
     def __init__(self):
         self.root = tk.Tk()
+        self._ui_task_queue = queue.Queue()
         # initialize prompt manager before UI
         self.prompt_mgr = PromptManager(
             'config/prompt_chn.ini'
         )
         self.setup_managers()
         self.setup_ui()
+        self._schedule_ui_queue_drain()
         self.setup_monitoring()        # 状态变量
         self.is_operation_in_progress = False
         self.is_refreshing_devices = False  # 防止频繁刷新设备
@@ -353,6 +356,33 @@ class AuthenticatorToolGUI:
 
         self.device_monitor.start_monitoring()
 
+    def _run_on_ui_thread(self, callback, *args, **kwargs):
+        """确保UI更新在Tk主线程执行。"""
+        if threading.current_thread() is threading.main_thread():
+            callback(*args, **kwargs)
+            return
+        self._ui_task_queue.put((callback, args, kwargs))
+
+    def _schedule_ui_queue_drain(self):
+        self.root.after(16, self._drain_ui_task_queue)
+
+    def _drain_ui_task_queue(self):
+        while True:
+            try:
+                callback, args, kwargs = self._ui_task_queue.get_nowait()
+            except queue.Empty:
+                break
+
+            try:
+                callback(*args, **kwargs)
+            except Exception as e:
+                logging.error(f"UI任务执行失败: {e}")
+
+        try:
+            self._schedule_ui_queue_drain()
+        except tk.TclError:
+            pass
+
     def load_network_config(self):
         """加载网络监控配置"""
         try:
@@ -499,8 +529,7 @@ class AuthenticatorToolGUI:
                 # 没有激活盒子时清空显示
                 self.clear_authenticator_display()
 
-        # 在主线程中更新UI
-        self.root.after(0, update_ui)
+        self._run_on_ui_thread(update_ui)
 
     def update_authenticator_selector(self, authenticator_serials: List[str]):
         """更新激活盒子选择器"""
@@ -779,7 +808,7 @@ class AuthenticatorToolGUI:
                 heading
             ))
 
-        self.root.after(0, lambda r=rows: self._apply_device_rows(r))
+        self._run_on_ui_thread(self._apply_device_rows, rows)
 
     def _update_auto_auth_ui_state(self, authenticator_count: Optional[int] = None):
         """根据自动授权开关更新UI提示与手动操作可用性"""
@@ -850,6 +879,9 @@ class AuthenticatorToolGUI:
 
     def on_monitor_error(self, error_message: str):
         """监控错误处理"""
+        self._run_on_ui_thread(self._handle_monitor_error, error_message)
+
+    def _handle_monitor_error(self, error_message: str):
         self.status_var.set(self.prompt_mgr.format('Monitoring.monitor_error', error=error_message))
         logging.error(self.prompt_mgr.format('Monitoring.network_monitor_error', error=error_message))
 
