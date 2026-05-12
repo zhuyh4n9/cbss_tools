@@ -40,6 +40,8 @@ class _BlockingAdbManager:
 
 
 class TestDeviceParserKickTrigger(unittest.TestCase):
+    _FINAL_UPDATE_WINDOW = 3
+
     def setUp(self):
         self.adb = _BlockingAdbManager()
         self.parser = DeviceParser(self.adb)
@@ -80,18 +82,21 @@ class TestDeviceParserKickTrigger(unittest.TestCase):
         target.markDirty(lambda: self.parser.kick_trigger(serial))
         elapsed = time.time() - start
 
-        self.assertLess(elapsed, 0.2, "kick_trigger 应异步触发，不能阻塞调用线程")
+        self.assertLess(elapsed, 0.2, "kick_trigger should return immediately without blocking the caller")
         self.assertTrue(
             self._wait_until(
                 lambda: any(update.get(serial) == "Checking..." for update in self.updates)
             ),
-            "触发异步刷新前应先发出 device_update 告知设备正在刷新中",
+            "device_update should expose a refreshing state before the async refresh completes",
         )
 
         self.adb.release_refresh()
         self.assertTrue(
             self._wait_until(
-                lambda: any(update.get(serial) == "Unauthorized" for update in self.updates[-3:])
+                lambda: any(
+                    update.get(serial) == "Unauthorized"
+                    for update in self.updates[-self._FINAL_UPDATE_WINDOW:]
+                )
             )
         )
 

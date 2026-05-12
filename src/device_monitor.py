@@ -289,11 +289,8 @@ class DeviceMonitor:
         """手动刷新全部设备（用户按钮触发）"""
         try:
             with self.device_parser._lock:
-                devices = (
-                    [(serial, dev) for serial, dev in self.device_parser._ready_queue.items()] +
-                    [(serial, dev) for serial, dev in self.device_parser._await_queue.items()]
-                )
-            for _, d in devices:
+                devices = list(self.device_parser._ready_queue.values()) + list(self.device_parser._await_queue.values())
+            for d in devices:
                 d.markDirty()
             self.device_parser.kick_trigger()
         except Exception as e:
