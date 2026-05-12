@@ -35,9 +35,17 @@ class DeviceClassificationStrategy:
                     return ClassificationDecision(ready_device=None, should_add_cube=True)
                 return ClassificationDecision(ready_device=None, should_add_cube=False, should_mark_unknown=True)
 
-        # 模拟设备直接保留
+        # 模拟设备：创建SimulatorDevice，从detector获取simulate_activate_failure标志
         if base_device.is_simulation:
-            return ClassificationDecision(ready_device=base_device.clone())
+            from .device_source import SimulatorDeviceDetector
+            failure_flag = SimulatorDeviceDetector._sim_failure_flags.get(serial, False)
+            sim_device = ITargetDevice.CreateSimulation(
+                status=base_device.getStatus() or "Unauthorized",
+                serial_number=serial,
+                uuid=base_device.getUuid() if base_device.getUuid() else None,
+                simulate_activate_failure=failure_flag,
+            )
+            return ClassificationDecision(ready_device=sim_device)
 
         return ClassificationDecision(ready_device=UnknownDevice(
             detection_method=base_device.getDetectionMethod(),

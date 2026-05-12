@@ -5,7 +5,7 @@
 
 ---
 
-## 一、全量架构（v3.2.1）
+## 一、全量架构（v3.2.2）
 
 ### 数据流
 1. **设备探测**：`DeviceMonitor` 通过 `IDeviceDetector` 列表轮询：
@@ -13,18 +13,24 @@
    - `SimulatorDeviceDetector` — 模拟设备（用户操作触发 pending 增删事件）
    - Detector 通过 `poll_changes()` 返回 `DeviceChange(added, removed)`，仅上报变化
 2. **设备管理**：`DeviceMonitor` 维护 `_connected_index` 统一记录所有探测器上报的设备
-   - 探测器上报增删 → 更新 `_connected_index` → 调用 `sync_connected_devices` 同步到 parser
-   - Sim 设备通过 parser 分类为 unknown，`_on_device_parser_update` 以 `SimulatorDeviceDetector.poll_devices()` 为准合并到 `target_devices`
+   - 仅 `_monitor_loop` 调用 `_update_device_info` 轮询各 Detector 的 `poll_changes()`
+   - 仅将增删变化（`added`/`removed`）传递给 `sync_connected_devices`，不刷新全部设备
 3. **设备分类**：`DeviceParser` 将序列号分流为 authenticator / target，维护 `await/ready` 队列。
-   - 分类完成后自动 `markDirty`，kick parser 执行 `refreshDeviceMeta` 获取元信息
-   - `refreshDeviceMeta` 前后记录 INFO 日志（`开始/完成 [serial], status=..., uuid=...`）
-3. **认证器快照**：`CubeManager` 周期刷新 `snapshot`，并通过回调更新 UI。
-4. **授权流程**：`AuthenticationManager._perform_authentication()` 执行：
+   - `_to_target_device` 不区分 sim/adb 类型，统一创建 `UnknownDevice`/`UnknownAdbDevice`
+   - `DeviceClassificationStrategy.classify_device` 负责创建 `SimulatorDevice`（含 `simulate_activate_failure`）
+   - 分类完成后在 worker loop 中 `markDirty(kick)`，触发 `refreshDeviceMeta` 获取元信息
+   - `refreshDeviceMeta` 前后记录 INFO 日志
+4. **认证器快照**：`CubeManager` 周期刷新 `snapshot`（仅 Cube，不刷新 target 设备）。
+5. **授权流程**：`AuthenticationManager._perform_authentication()` 执行：
    `check state → sign_uuid → log(all/) → double check → activate → log(failure/)`
    - sign_uuid 前必须先确认 device 状态为 Unauthorized，避免消耗 Cube 授权数
    - activate 失败标记 `AuthorizationFailure` 状态，禁止再次授权
    - 失败记录写入 `detailed_info/failure/`，含 Cube status/expire
-   - 设备加入自动授权队列时记录 INFO 日志
+6. **刷新机制**（仅通过 `markDirty` 触发）：
+   - 新增设备 → `markDirty`（worker loop 中）
+   - 用户按钮刷新 → 全部设备 `markDirty` + `kick`
+   - 授权完成/失败 → `mark_device_dirty(serial)`
+   - `_submitted` 标记防止重复加入自动授权队列
 
 ### 关键文件
 - `src/device_source.py` — `IDeviceDetector` 抽象 + `AdbDeviceDetector` + `SimulatorDeviceDetector`
