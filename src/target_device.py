@@ -108,6 +108,11 @@ class ITargetDevice(ABC):
     @abstractmethod
     def isDirty(self) -> bool:
         pass
+    
+    @abstractmethod
+    def getStatusDirect(self) -> str:
+        """直接获取当前状态，不触发刷新"""
+        pass
 
     @abstractmethod
     def isLocked(self) -> bool:
@@ -143,6 +148,9 @@ class TargetDeviceAbstract(ITargetDevice, ABC):
     def getStatus(self) -> str:
         return _normalize_status(self.status)
 
+    # for default, getStatus and getStatusDirect perform the same
+    def getStatusDirect(self) -> str:
+        return _normalize_status(self.status)
     def getConnectedUsbPort(self) -> str:
         return self.usb_port
 
@@ -237,6 +245,13 @@ class AC8267Device(IAdbDevice):
         if state_result.success and state_result.result_data:
             self.setStatus(state_result.result_data.strip())
         self._dirty = False
+    
+    def getStatusDirect(self) -> str:
+        """直接通过ADB获取当前状态，不触发刷新"""
+        state_result = self.adb_manager.get_device_state(self.getSerialNumber())
+        if state_result.success and state_result.result_data:
+            return _normalize_status(state_result.result_data.strip())
+        return "Unknown"
 
     def activate(self, signature: str) -> CommandResult:
         """锁定→激活→markDirty→解锁。失败时标记AuthorizationFailure"""
