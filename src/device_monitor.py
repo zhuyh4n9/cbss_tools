@@ -367,7 +367,11 @@ class DeviceMonitor:
     def _get_target_from_parser(self, serial: str):
         """从parser的ready/await队列中查找TargetDeviceAbstract"""
         with self.device_parser._lock:
-            devices = list(self.device_parser._ready_queue.values()) + list(self.device_parser._await_queue.values())
+            devices = (
+                list(self.device_parser._kick_refreshing.values()) +
+                list(self.device_parser._ready_queue.values()) +
+                list(self.device_parser._await_queue.values())
+            )
         for d in devices:
             if d.getSerialNumber() == serial:
                 return d

@@ -81,8 +81,14 @@ class DeviceParser:
                         continue
                     self._kick_refreshing[dirty_serial] = current
                     should_notify = True
+                elif dirty_serial in self._await_queue and dirty_serial not in self._kick_refreshing:
+                    # await中的dirty设备也需要进入worker刷新流程，否则可能长期停留在Checking...
+                    should_notify = True
 
-                if dirty_serial in self._kick_refreshing and dirty_serial not in self._kick_queue:
+                if (
+                    (dirty_serial in self._kick_refreshing or dirty_serial in self._await_queue)
+                    and dirty_serial not in self._kick_queue
+                ):
                     self._kick_queue.append(dirty_serial)
 
         if should_notify:

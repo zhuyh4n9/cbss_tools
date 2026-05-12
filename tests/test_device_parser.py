@@ -4,6 +4,7 @@ import unittest
 
 from src.adb_manager import CommandResult, DeviceInfo
 from src.device_parser import DeviceParser
+from src.target_device import AC8267Device
 
 
 class _BlockingAdbManager:
@@ -99,6 +100,36 @@ class TestDeviceParserKickTrigger(unittest.TestCase):
                 )
             )
         )
+
+    def test_kick_trigger_queues_dirty_await_device_for_worker_refresh(self):
+        serial = "DEV-AWAIT-001"
+        parser = DeviceParser(self.adb)
+        parser._base_devices[serial] = AC8267Device(
+            serial_number=serial,
+            adb_manager=self.adb,
+            uuid="old-uuid",
+            status="Checking...",
+        )
+        parser._order.append(serial)
+        await_device = AC8267Device(
+            serial_number=serial,
+            adb_manager=self.adb,
+            uuid="old-uuid",
+            status="Checking...",
+        )
+        await_device.markDirty()
+        parser._await_queue[serial] = await_device
+
+        parser.kick_trigger(serial)
+
+        self.assertEqual(parser._kick_queue, [serial])
+        kick_serial = parser._next_kick_serial()
+        self.assertEqual(kick_serial, serial)
+        parser._kick(kick_serial)
+
+        self.assertNotIn(serial, parser._await_queue)
+        self.assertIn(serial, parser._ready_queue)
+        self.assertEqual(parser._ready_queue[serial].getStatus(), "Unauthorized")
 
 
 if __name__ == "__main__":
