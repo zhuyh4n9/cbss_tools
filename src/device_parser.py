@@ -69,6 +69,7 @@ class DeviceParser:
                 dirty_serials = [serial] if dev is not None and dev.isDirty() else []
 
             for dirty_serial in dirty_serials:
+                should_queue_kick = False
                 if dirty_serial in self._ready_queue and dirty_serial not in self._kick_refreshing:
                     current = self._ready_queue.pop(dirty_serial)
                     try:
@@ -81,14 +82,15 @@ class DeviceParser:
                         continue
                     self._kick_refreshing[dirty_serial] = current
                     should_notify = True
-                elif dirty_serial in self._await_queue and dirty_serial not in self._kick_refreshing:
-                    # await中的dirty设备也需要进入worker刷新流程，否则可能长期停留在Checking...
+                    should_queue_kick = True
+                elif dirty_serial in self._kick_refreshing:
+                    should_queue_kick = True
+                elif dirty_serial in self._await_queue:
+                    # Dirty await devices must also be queued for worker refresh, or they can stay at Checking...
                     should_notify = True
+                    should_queue_kick = True
 
-                if (
-                    (dirty_serial in self._kick_refreshing or dirty_serial in self._await_queue)
-                    and dirty_serial not in self._kick_queue
-                ):
+                if should_queue_kick and dirty_serial not in self._kick_queue:
                     self._kick_queue.append(dirty_serial)
 
         if should_notify:

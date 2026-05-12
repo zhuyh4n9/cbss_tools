@@ -42,6 +42,7 @@ class _BlockingAdbManager:
 
 class TestDeviceParserKickTrigger(unittest.TestCase):
     _FINAL_UPDATE_WINDOW = 3
+    _EXPECTED_REFRESHED_STATUS = "Unauthorized"
 
     def setUp(self):
         self.adb = _BlockingAdbManager()
@@ -104,6 +105,7 @@ class TestDeviceParserKickTrigger(unittest.TestCase):
     def test_kick_trigger_queues_dirty_await_device_for_worker_refresh(self):
         serial = "DEV-AWAIT-001"
         parser = DeviceParser(self.adb)
+        # _kick only restores refreshed devices that still exist in _base_devices.
         parser._base_devices[serial] = AC8267Device(
             serial_number=serial,
             adb_manager=self.adb,
@@ -129,7 +131,7 @@ class TestDeviceParserKickTrigger(unittest.TestCase):
 
         self.assertNotIn(serial, parser._await_queue)
         self.assertIn(serial, parser._ready_queue)
-        self.assertEqual(parser._ready_queue[serial].getStatus(), "Unauthorized")
+        self.assertEqual(parser._ready_queue[serial].getStatus(), self._EXPECTED_REFRESHED_STATUS)
 
 
 if __name__ == "__main__":
