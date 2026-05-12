@@ -1,11 +1,11 @@
-# cbss_tools 维护 Skill
+# CBSS Tool Agent  Guide
 
 ## 目标
 用于指导维护 `cbss_tools` / `cbss_host_tool` 相关 PC 端代码（The Cube）时的分析与改动路径，确保新增能力可落在现有架构中。本文档同时是全量功能清单，便于快速定位。
 
 ---
 
-## 一、全量架构（v3.2.2）
+## 全量架构（v3.2.2）
 
 ### 数据流
 1. **设备探测**：`DeviceMonitor` 通过 `IDeviceDetector` 列表轮询：
@@ -33,11 +33,12 @@
    - `_submitted` 标记防止重复加入自动授权队列
 
 ### 关键文件
+- `src/adb_manager.py` —  Adb Command Utils
 - `src/device_source.py` — `IDeviceDetector` 抽象 + `AdbDeviceDetector` + `SimulatorDeviceDetector`
 - `src/device_monitor.py` — 设备监控，统一管理所有探测器
 - `src/device_parser.py` — 设备分类 + dirty 设备 kick 刷新
-- `src/device_classification_strategy.py` — 分类策略，分类后 markDirty
-- `src/target_device.py` — `ITargetDevice` 接口 + dirty/lock 状态管理
+- `src/device_classification_strategy.py` — 分类策略，不同设备在这里耦合, 分类后 markDirty
+- `src/target_device.py` — 为外部定义统一的`ITargetDevice` 接口 + dirty/lock 状态管理
 - `src/cube_manager.py` — Cube 快照管理
 - `src/auth_manager.py` — 授权流程编排
 - `src/main_gui.py` — Tkinter 主窗口
@@ -71,7 +72,7 @@
 
 ---
 
-## 二、cbss_tools 相关改动的标准落点
+## cbss_tools 相关改动的标准落点
 凡是新增/修改设备能力，按以下顺序改：
 1. 在 `config/default_config.ini` 的 `[ADB_Commands]` 新增命令模板。
 2. 在 `src/adb_manager.py` 增加同名封装方法（只走 `execute_adb_command()`）。
@@ -80,19 +81,19 @@
 
 禁止：在 UI 层直接写 `subprocess` 或硬编码 ADB 命令。
 
-## 三、输出解析规则（易踩坑）
+## 输出解析规则（易踩坑）
 - 命令成功判定依赖工具输出中的：
   - `[status] <code>[, message]`
   - `[result] <payload>`
 - 解析逻辑在 `ADBManager._parse_command_output()`。
 - 若 `status_code != 0`，错误文案优先来自 `[status]`，其次回落到 `Status_Messages` 配置。
 
-## 四、并发与 UI 更新规则
+## 并发与 UI 更新规则
 - 长耗时操作必须放在线程中执行。
 - 线程内更新 UI 必须使用 `root.after(...)` 或 `dialog.after(...)` 回主线程。
 - 设备分类误判修复依赖 `DeviceParser.sync_connected_devices()` 与 `_worker_loop()` 的重分类逻辑，不要轻易删除重试队列。
 
-## 五、联调与回归清单
+## 联调与回归清单
 - 本地运行：`python main.py`
 - 打包：`python package_all.py --type release`
 - 清理：`python package_all.py --clean`
@@ -104,12 +105,28 @@
 3. Wi-Fi 连接后 `time_status` / 网络连通性状态更新正常。
 4. 日志写入 `logs/cbss_tool.log`，异常可定位。
 
-## 六、平台与依赖边界
+## 平台与依赖边界
 - Windows 优先，ADB 默认路径：`adb/adb.exe`。
 - 设备侧依赖：`cbss_tools`、`cbss_host_tool`。
 - 诊断与网络相关能力依赖 `default_config.ini` 中的命令模板与 `Network` 配置。
 
-## 七、维护建议（针对本项目）
+## 维护方法
+
+### 维护建议
 - 做新功能先扩展配置，再扩展 `ADBManager`，最后接 UI。
 - 保持 `DeviceMonitor -> DeviceParser -> CubeManager` 边界清晰，避免把分类与快照逻辑挪回 UI。
 - 对外行为变化（菜单、提示、错误）一律走 `prompt_chn.ini`，避免硬编码中文。
+- 完成新功能开发后agent需要更新agent_guide.md中的架构设计
+- 提示词出现强制要求后，更新相关维护建议到强制要求中
+
+### 强制要求
+- UI代码与逻辑代码分离维护
+- 改动前需要根据架构设计，确认功能不会导致功能失效
+- 任何ITargetDevice的子类(包括SimulatorDevice, AdbDevice等)需要统一管理，除Classification以及UI外，不应该在任何非子类代码中体现中差异。
+- 完成新功能开发后，在tests/下增加该功能测试case, 并需要确保tests/下全部case通过
+- 完成Bug修复后，需要确保tests/下全部case通过
+
+### 版本管理
+- 完成新功能开发后，更新次设备号
+- 完成bug修复后，更新修订号
+- 修改版本后，将更新内容更新到Changelog.md
