@@ -346,12 +346,14 @@ class DeviceMonitor:
         """根据序列号获取激活盒子信息"""
         return self.authenticators.get(serial)
 
-    def get_target_device(self, serial: str):
+    def get_target_device(self, serial: str, create_if_missing: bool = True):
         """根据serial获取ITargetDevice"""
         serial = str(serial or "").strip()
         target = self._get_target_from_parser(serial)
         if target is not None:
             return target
+        if not create_if_missing:
+            return None
         target = ITargetDevice.CreateAdbDevice(serial, self.adb_manager)
         if isinstance(target, AC8267Device):
             return target

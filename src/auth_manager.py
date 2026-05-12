@@ -504,15 +504,11 @@ class AuthenticationManager:
         return AC8267Device(serial_number=str(serial), adb_manager=self.adb_manager, uuid=uuid, status="Unauthorized")
 
     def check_device_authentication_status(self, device_serial: str, fallback_status: Optional[str] = None) -> str:
-        """检查设备激活状态（委托device_monitor统一处理）"""
-        if hasattr(self.device_monitor, "get_device_auth_status"):
-            return self.device_monitor.get_device_auth_status(device_serial)
-        if fallback_status is not None:
-            return str(fallback_status)
-        result = self.adb_manager.get_device_state(device_serial)
-        if result.success:
-            return str(result.result_data or "")
-        return "Unknown"
+        device = self.device_monitor.get_target_device(device_serial, create_if_missing=False)
+        if device is None:
+            return str(fallback_status or "Unknown")
+        return device.getStatusDirect()
+
 
     def _refresh_device(self, serial: str) -> None:
         if hasattr(self.device_monitor, "mark_device_dirty"):
