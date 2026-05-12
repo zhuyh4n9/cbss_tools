@@ -9,5 +9,5 @@ import os
 ENABLE_SIMULATED_DEVICE = os.environ.get("CBSS_ENABLE_SIMULATED_DEVICE", "1") == "1"
 
 # 模拟设备常量
-SIMULATED_DEVICE_STATUS_OPTIONS = ("Pirated", "Authorized", "Unauthorized")
+SIMULATED_DEVICE_STATUS_OPTIONS = ("Pirated", "Authorized", "Unauthorized", "AuthorizationFailure")
 SIMULATED_AUTHENTICATOR_SERIAL = "SIMULATED_AUTHENTICATOR"

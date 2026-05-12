@@ -14,6 +14,11 @@ class _FakeDeviceParser:
         pass
 
 
+class _FakeSimDetector:
+    def get_device(self, serial: str):
+        return None
+
+
 class _FakeDeviceMonitor:
     def __init__(self, events=None):
         self.config = _FakeConfig()
@@ -23,6 +28,9 @@ class _FakeDeviceMonitor:
         self.refresh_all_cube_calls = 0
         self.refresh_device_calls = []
         self.refresh_all_device_calls = 0
+        self.sim_detector = _FakeSimDetector()
+        self._simulated_cubes = {}
+        self.target_devices = []
 
     def refresh_all_cube(self):
         self.refresh_all_cube_calls += 1
@@ -36,6 +44,9 @@ class _FakeDeviceMonitor:
 
     def get_authenticator_by_serial(self, serial: str):
         return self.authenticators.get(serial)
+
+    def is_simulated_cube(self, serial: str) -> bool:
+        return False
 
 
 class _FailingRefreshDeviceMonitor(_FakeDeviceMonitor):

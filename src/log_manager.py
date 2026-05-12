@@ -2,16 +2,50 @@
 日志管理模块
 负责配置和管理应用程序日志
 """
+import json
 import logging
 import os
+import threading
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 
 
 class LogManager:
+    _MAX_RECORDS_PER_FILE = 200
+    _auth_lock = threading.Lock()
+
     def __init__(self, config_manager):
         self.config = config_manager
+        self._auth_file_index = 0
+        self._auth_record_count = 0
         self.setup_logging()
+        self._init_auth_log_dir()
+
+    def _init_auth_log_dir(self):
+        base_dir = os.path.join(os.path.dirname(
+            self.config.get('Logging', 'log_file', 'logs/cbss_tool.log')
+        ) or 'logs', 'detailed_info', 'all')
+        os.makedirs(base_dir, exist_ok=True)
+        # 找到当前最大文件id
+        import glob
+        existing = glob.glob(os.path.join(base_dir, 'authorization_*.json'))
+        max_id = 0
+        for f in existing:
+            try:
+                fid = int(os.path.splitext(os.path.basename(f))[0].split('_')[-1])
+                max_id = max(max_id, fid)
+            except ValueError:
+                pass
+        self._auth_file_index = max_id
+        # 读取最后一个文件的记录数
+        if max_id > 0:
+            last_file = os.path.join(base_dir, f'authorization_{max_id:06d}.json')
+            try:
+                with open(last_file, 'r', encoding='utf-8') as f:
+                    records = json.load(f)
+                    self._auth_record_count = len(records) if isinstance(records, list) else 0
+            except Exception:
+                self._auth_record_count = self._MAX_RECORDS_PER_FILE  # 强制新文件
 
     def setup_logging(self):
         """设置日志配置"""
@@ -142,3 +176,66 @@ class LogManager:
         except Exception as e:
             logging.error(f"更新日志文件路径失败: {str(e)}")
             return False
+
+    def _get_auth_dir(self, subdir: str) -> str:
+        """获取授权日志目录，优先从配置读取"""
+        key = f'auth_log_{subdir}_dir'
+        configured = self.config.get('Logging', key, '')
+        if configured and configured.strip():
+            return configured.strip()
+        base = os.path.dirname(self.config.get('Logging', 'log_file', 'logs/cbss_tool.log')) or 'logs'
+        return os.path.join(base, 'detailed_info', subdir)
+
+    def _write_auth_record(self, record: dict, subdir: str):
+        with self._auth_lock:
+            base_dir = self._get_auth_dir(subdir)
+            os.makedirs(base_dir, exist_ok=True)
+            filepath = os.path.join(base_dir, f'authorization_{self._auth_file_index:06d}.json')
+            records = []
+            if os.path.exists(filepath):
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        records = json.load(f)
+                except Exception:
+                    records = []
+            if self._auth_record_count >= self._MAX_RECORDS_PER_FILE:
+                self._auth_file_index += 1
+                self._auth_record_count = 0
+                filepath = os.path.join(base_dir, f'authorization_{self._auth_file_index:06d}.json')
+                records = []
+            records.append(record)
+            self._auth_record_count = len(records)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(records, f, ensure_ascii=False, indent=2)
+
+    def log_authorization(self, success: bool, device_serial: str, uuid: str,
+                          signature: str, cube_id: str, error_reason: str = ""):
+        """记录授权详情到 detailed_info/all/"""
+        record = {
+            "success": bool(success),
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "serial_id": str(device_serial or ""),
+            "uuid": str(uuid or ""),
+            "signature": str(signature or ""),
+            "cube_id": str(cube_id or ""),
+        }
+        if not success and error_reason:
+            record["error_reason"] = str(error_reason)
+        self._write_auth_record(record, 'all')
+
+    def log_authorization_failure(self, device_serial: str, uuid: str, signature: str,
+                                   cube_id: str, error_reason: str,
+                                   cube_status: str = "", cube_expire: str = ""):
+        """记录授权失败详情到 detailed_info/failure/（含Cube状态信息）"""
+        record = {
+            "success": False,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "serial_id": str(device_serial or ""),
+            "uuid": str(uuid or ""),
+            "signature": str(signature or ""),
+            "cube_id": str(cube_id or ""),
+            "error_reason": str(error_reason),
+            "cube_status": str(cube_status or ""),
+            "cube_expire": str(cube_expire or ""),
+        }
+        self._write_auth_record(record, 'failure')

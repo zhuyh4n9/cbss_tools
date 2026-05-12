@@ -1,5 +1,85 @@
 # CBSS工具更新日志
 
+## v3.2.2 (2026-05-11)
+
+### 架构优化
+1. **增量设备同步**
+   - `DeviceMonitor._update_device_info` 仅将 Detector 上报的增删变化同步到 parser
+   - `sync_connected_devices` 改为接收 `added_devices`/`removed_serials`，不再全量 diff
+   - `AdbDeviceDetector.poll_changes` 对比上次 serial 列表，仅上报变化
+2. **刷新统一为 markDirty 机制**
+   - 新增 `mark_device_dirty(serial)`：标记单个设备 dirty 并 kick parser 刷新
+   - 用户刷新按钮：全部设备 `markDirty` + `kick`
+   - 授权完成/失败：仅 `mark_device_dirty` 该设备
+   - `refresh_all_cube` 不再刷新 target 设备（仅刷新 Cube 快照）
+3. **`_submitted` 标记防止重复入队**
+   - 设备首次 `unauthorized_ready` 后设置 `_submitted=True`，避免重复加入自动授权队列
+   - 设备移除后重新添加时重置
+4. **`classify_device` 仅在分类策略中处理 sim 设备**
+   - `_to_target_device` 不再区分 sim/adb 类型
+   - `DeviceClassificationStrategy.classify_device` 通过 `SimulatorDeviceDetector._sim_failure_flags` 获取 `simulate_activate_failure` 标志
+5. **`get_target_device` 统一查找路径**
+   - 仅通过 parser 查找 `TargetDeviceAbstract`，不区分模拟/真实设备
+
+### 问题修复
+1. **自动授权队列重复添加** — 通过 `_submitted` 标记防止
+2. **`_mark_all_devices_dirty` 缺失** — 修复手动刷新按钮报错
+3. **`SimulatorDeviceDetector.get_device` 缺失** — 恢复 `_devices` 字典和 `get_device()` 方法
+
+## v3.2.1 (2026-05-11)
+
+### 问题修复
+1. **修复 `_perform_authentication` sign_uuid 不执行的问题**
+   - 缩进错误导致 sign_uuid 及后续步骤在状态检查返回后无法执行
+2. **修复所有设备提示"已被锁定"的问题**
+   - 移除 `_perform_authentication` 外层 lock，activate 内部已处理 lock/unlock
+3. **activate 失败后 UI 状态更新**
+   - 激活失败时立即调用 `update_device_status` 同步 AuthorizationFailure 到 UI
+4. **AuthorizationFailure 设备防止状态刷新覆盖**
+   - `refreshDeviceMeta` 对 AuthorizationFailure 设备跳过 ADB 调用，仅清除 dirty
+5. **移除认证流程中模拟设备的特殊处理**
+   - `_perform_authentication` 不再区分模拟/真实设备的返回标签
+
+### 功能增强
+1. **模拟设备创建弹窗增强**
+   - 新增自定义 UUID、Serial ID 输入（可选）
+   - 新增 Simulation activate Failure 勾选框，模拟激活失败场景
+2. **模拟设备右键移除**
+   - 右键 SIM- 前缀设备可移除，模拟设备重新插拔
+3. **授权日志分离**
+   - 所有记录 → `detailed_info/all/`，失败记录 → `detailed_info/failure/`
+   - 失败记录额外包含 cube_status、cube_expire
+   - 日志目录可通过配置 `auth_log_all_dir` / `auth_log_failure_dir` 指定
+4. **授权流程优化**
+   - sign_uuid 前先确认设备状态为 Unauthorized，避免浪费 Cube 授权数
+   - double check 设备状态后再执行 activate
+   - AuthorizationFailure 状态禁止再次激活
+5. **DEBUG 日志增强**
+   - device_parser kick 时记录 refreshDeviceMeta 开始/完成的 INFO 日志
+
+## v3.2.0 (2026-05-11)
+
+### 逻辑优化
+1. **TargetDevice 增加 dirty/lock 状态管理**
+   - `ITargetDevice` 增加 `refreshDeviceMeta`、`markDirty`、`lock`、`unlock`、`isDirty`、`isLocked` 接口
+   - `markDirty` 标记设备状态不可信，kick `DeviceParser` 重新获取元信息（UUID/status/port）
+   - `lock`/`unlock` 保护关键操作（如 `activate`），lock 状态下 `markDirty` 延迟到 unlock 执行
+   - `activate` 内部自动执行 lock→activate→markDirty→unlock 流程
+2. **DeviceParser 增加 kick 操作**
+   - `kick()` 遍历所有 dirty 设备，调用 `refreshDeviceMeta` 获取最新元信息
+   - 分类完成后自动 `markDirty` 触发初次刷新
+3. **认证流程统一**
+   - `_perform_authentication` 不再区分模拟/真实设备状态验证
+   - `activate` 内部自动触发 parser 刷新
+4. **DeviceMonitor 统一管理全部设备**
+   - ADB 设备与模拟设备通过统一的探测器列表管理
+   - 模拟设备不再单独合并到 `target_devices`
+
+### 日志增强
+- `logs/detailed_info/all/` 目录记录授权详情
+- 每条记录包含：成功/失败、时间、serial_id、uuid、signature、Cube Id、错误原因
+- 每个文件限制 200 条记录，自动轮转
+
 ## v3.1.4 (2026-05-09)
 
 ### 问题修复
