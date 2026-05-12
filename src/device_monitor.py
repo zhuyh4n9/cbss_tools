@@ -300,10 +300,6 @@ class DeviceMonitor:
         """标记全部设备dirty并kick parser刷新"""
         self.refresh_devices()
 
-    def _mark_all_devices_dirty(self):
-        """兼容旧调用：标记全部设备dirty并kick parser刷新"""
-        self.mark_all_devices_dirty()
-
     def mark_device_dirty(self, serial: str):
         """标记单个设备dirty并kick parser刷新"""
         target = self._get_target_from_parser(str(serial))
@@ -415,7 +411,7 @@ class DeviceMonitor:
         sim_det = self._find_detector("Simulator")
         if sim_det is None:
             return False
-        if isinstance(sim_det, SimulatorDeviceDetector) and sim_det.get_device(serial) is None:
+        if hasattr(sim_det, "get_device") and sim_det.get_device(serial) is None:
             return False
         sim_det.remove_device(serial)
         self._update_device_info()

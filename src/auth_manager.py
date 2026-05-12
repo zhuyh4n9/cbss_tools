@@ -413,10 +413,7 @@ class AuthenticationManager:
             # 步骤5: double check 状态
             if progress_callback:
                 progress_callback("正在二次确认设备状态...")
-            if hasattr(self.device_monitor, "get_device_auth_status"):
-                double_check_status = self.check_device_authentication_status(device_serial)
-            else:
-                double_check_status = target.getStatus()
+            double_check_status = self.check_device_authentication_status(device_serial, fallback_status=target.getStatus())
             if double_check_status.strip().lower() != "unauthorized":
                 error_msg = f"设备状态已变化: {double_check_status}"
                 self._log_auth_result(log_mgr, False, device_serial, device_uuid, signature, cube_id, error_msg, cube)
@@ -506,10 +503,12 @@ class AuthenticationManager:
         uuid = uuid_result.result_data.strip() if uuid_result.success and uuid_result.result_data else ""
         return AC8267Device(serial_number=str(serial), adb_manager=self.adb_manager, uuid=uuid, status="Unauthorized")
 
-    def check_device_authentication_status(self, device_serial: str) -> str:
+    def check_device_authentication_status(self, device_serial: str, fallback_status: Optional[str] = None) -> str:
         """检查设备激活状态（委托device_monitor统一处理）"""
         if hasattr(self.device_monitor, "get_device_auth_status"):
             return self.device_monitor.get_device_auth_status(device_serial)
+        if fallback_status is not None:
+            return str(fallback_status)
         result = self.adb_manager.get_device_state(device_serial)
         if result.success:
             return str(result.result_data or "")
