@@ -107,6 +107,18 @@ class TestConfigManager(unittest.TestCase):
         cm = ConfigManager(self.config_path)
         self.assertEqual(cm.get("DeviceList", "color_pirated"), "#663300")
 
+    def test_default_config_includes_cube_status_info_style(self):
+        cm = ConfigManager(os.path.join(self.tmpdir.name, "missing.ini"))
+        self.assertEqual(cm.getint("CubeStatusInfo", "font_size"), 10)
+        self.assertEqual(cm.get("CubeStatusInfo", "authorized_count_color"), "#0000FF")
+        self.assertEqual(cm.get("CubeStatusInfo", "remaining_low_color"), "#FF0000")
+        self.assertEqual(cm.get("CubeStatusInfo", "remaining_medium_color"), "#FFD700")
+        self.assertEqual(cm.get("CubeStatusInfo", "remaining_high_color"), "#008000")
+
+    def test_default_config_includes_theme(self):
+        cm = ConfigManager(os.path.join(self.tmpdir.name, "missing.ini"))
+        self.assertEqual(cm.get("Theme", "current"), "modern")
+
 
 if __name__ == "__main__":
     unittest.main()

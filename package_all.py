@@ -21,7 +21,7 @@ class CBSSPackager:
 
     def __init__(self):
         self.project_root = Path.cwd()
-        self.version = "3.2.3"
+        self.version = "3.4.0"
         self.build_date = datetime.now().strftime("%Y-%m-%d")
 
         # 打包目录

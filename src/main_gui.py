@@ -89,6 +89,46 @@ DEVICE_LIST_STATUS_TAGS = {
     'authorizationfailure': 'authorization_failure',
     'pirated': 'pirated',
 }
+CUSTOM_UI_THEMES = ('modern', 'aero', 'light', 'dark')
+DEFAULT_UI_THEME = 'modern'
+THEME_ALIASES = {
+    'moderm': 'modern',
+}
+CUSTOM_THEME_BASE = 'clam'
+CUSTOM_THEME_PALETTES = {
+    'modern': {
+        'background': '#F3F6FA',
+        'foreground': '#1F2937',
+        'fieldbackground': '#FFFFFF',
+        'accent': '#2563EB',
+        'selectbackground': '#2563EB',
+        'selectforeground': '#FFFFFF',
+    },
+    'aero': {
+        'background': '#EEF3FA',
+        'foreground': '#1F2937',
+        'fieldbackground': '#FFFFFF',
+        'accent': '#2B579A',
+        'selectbackground': '#D7E7F9',
+        'selectforeground': '#1F2937',
+    },
+    'light': {
+        'background': '#FFFFFF',
+        'foreground': '#000000',
+        'fieldbackground': '#FFFFFF',
+        'accent': '#0078D7',
+        'selectbackground': '#0078D7',
+        'selectforeground': '#FFFFFF',
+    },
+    'dark': {
+        'background': '#202124',
+        'foreground': '#E8EAED',
+        'fieldbackground': '#303134',
+        'accent': '#8AB4F8',
+        'selectbackground': '#3C4043',
+        'selectforeground': '#FFFFFF',
+    },
+}
 
 class AuthenticatorToolGUI:
     def __init__(self):
@@ -99,6 +139,7 @@ class AuthenticatorToolGUI:
             'config/prompt_chn.ini'
         )
         self.setup_managers()
+        self.apply_configured_theme()
         self.setup_ui()
         self._schedule_ui_queue_drain()
         self.setup_monitoring()        # 状态变量
@@ -207,6 +248,17 @@ class AuthenticatorToolGUI:
             command=self.toggle_auto_activation
         )
         tools_menu.add_separator()
+        theme_menu = tk.Menu(tools_menu, tearoff=0)
+        tools_menu.add_cascade(label=self.prompt_mgr.get('MenuItems.theme_select'), menu=theme_menu)
+        self.theme_menu_var = tk.StringVar(value=self._normalize_theme_name(self.config_manager.get('Theme', 'current', DEFAULT_UI_THEME)))
+        for theme_name in self._get_selectable_themes():
+            theme_menu.add_radiobutton(
+                label=self.prompt_mgr.get(f'Themes.{theme_name}', theme_name),
+                value=theme_name,
+                variable=self.theme_menu_var,
+                command=lambda name=theme_name: self.change_theme(name)
+            )
+        tools_menu.add_separator()
         tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.create_simulated_cube'), command=self.show_create_simulated_cube_dialog)
         tools_menu.add_command(label=self.prompt_mgr.get('MenuItems.load_simulated_cube'), command=self.show_load_simulated_cube_dialog)
           # 新增：设备WiFi连接
@@ -274,9 +326,11 @@ class AuthenticatorToolGUI:
         self.expire_date_label = ttk.Label(status_info_frame, textvariable=self.expire_date_var)
         self.expire_date_label.grid(row=0, column=1, sticky='w', padx=5, pady=2)
         ttk.Label(status_info_frame, text=self.prompt_mgr.get('Status.count_left')).grid(row=1, column=0, sticky='w', padx=5, pady=2)
-        ttk.Label(status_info_frame, textvariable=self.counter_var).grid(row=1, column=1, sticky='w', padx=5, pady=2)
+        self.counter_label = ttk.Label(status_info_frame, textvariable=self.counter_var)
+        self.counter_label.grid(row=1, column=1, sticky='w', padx=5, pady=2)
         ttk.Label(status_info_frame, text=self.prompt_mgr.get('Status.count_used')).grid(row=1, column=2, sticky='w', padx=(20,5), pady=2)
-        ttk.Label(status_info_frame, textvariable=self.authorized_num_var).grid(row=1, column=3, sticky='w', padx=5, pady=2)
+        self.authorized_num_label = ttk.Label(status_info_frame, textvariable=self.authorized_num_var)
+        self.authorized_num_label.grid(row=1, column=3, sticky='w', padx=5, pady=2)
         ttk.Label(status_info_frame, text=self.prompt_mgr.get('Status.device_state')).grid(row=2, column=0, sticky='w', padx=5, pady=2)
         self.device_status_label = ttk.Label(status_info_frame, textvariable=self.device_status_var)
         self.device_status_label.grid(row=2, column=1, sticky='w', padx=5, pady=2)
@@ -289,6 +343,7 @@ class AuthenticatorToolGUI:
         ttk.Label(status_info_frame, text=self.prompt_mgr.get('Status.current_wifi')).grid(row=3, column=2, sticky='w', padx=(20,5), pady=2)
         self.wifi_ssid_label = ttk.Label(status_info_frame, textvariable=self.wifi_ssid_var)
         self.wifi_ssid_label.grid(row=3, column=3, sticky='w', padx=5, pady=2)
+        self._setup_cube_status_info_style()
         right_frame = ttk.Frame(info_frame)
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
         snapshot_frame = ttk.LabelFrame(right_frame, text=self.prompt_mgr.get('UI.snapshot_group'), padding=5)
@@ -574,6 +629,7 @@ class AuthenticatorToolGUI:
             self.expire_date_var.set(auth_info.expired_date if auth_info.expired_date else "-")
             self.counter_var.set(str(auth_info.counter))
             self.authorized_num_var.set(str(auth_info.authorized_device_num))
+            self._update_cube_count_colors(auth_info.counter)
 
             # 更新时间状态 (NEW in Update 4)
             if (auth_info.time_status == "Ready"):
@@ -860,6 +916,183 @@ class AuthenticatorToolGUI:
             if hasattr(self, 'activate_all_button'):
                 self.activate_all_button.config(state='normal')
 
+    def _normalize_theme_name(self, theme_name: str) -> str:
+        normalized = (theme_name or 'light').strip().lower()
+        normalized = THEME_ALIASES.get(normalized, normalized)
+        if normalized in CUSTOM_UI_THEMES:
+            return normalized
+        if normalized in self._get_available_native_themes():
+            return normalized
+        return DEFAULT_UI_THEME
+
+    def _get_available_native_themes(self):
+        try:
+            return tuple(ttk.Style().theme_names())
+        except tk.TclError:
+            return ()
+
+    def _get_selectable_themes(self):
+        selectable = list(CUSTOM_UI_THEMES)
+        for theme_name in self._get_available_native_themes():
+            if theme_name not in selectable:
+                selectable.append(theme_name)
+        return tuple(selectable)
+
+    def apply_configured_theme(self):
+        theme_name = self._normalize_theme_name(self.config_manager.get('Theme', 'current', DEFAULT_UI_THEME))
+        self._apply_theme(theme_name)
+        return theme_name
+
+    def change_theme(self, theme_name: str):
+        normalized = self._normalize_theme_name(theme_name)
+        applied_theme = self._apply_theme(normalized)
+        self.config_manager.set('Theme', 'current', normalized)
+        if hasattr(self, 'theme_menu_var'):
+            self.theme_menu_var.set(normalized)
+        if self._is_native_theme(normalized):
+            self._rebuild_ui_after_native_theme_change()
+
+        if self.config_manager.save_config():
+            if hasattr(self, 'status_var'):
+                self.status_var.set(self.prompt_mgr.format('InfoMessages.theme_updated', theme=applied_theme))
+        else:
+            if hasattr(self, 'status_var'):
+                self.status_var.set(self.prompt_mgr.get('InfoMessages.theme_save_failed_status'))
+            messagebox.showwarning(
+                self.prompt_mgr.get('Common.warn_title'),
+                self.prompt_mgr.get('InfoMessages.theme_save_failed_status')
+            )
+
+    def _apply_theme(self, theme_name: str) -> str:
+        normalized = self._normalize_theme_name(theme_name)
+        style = ttk.Style()
+        available_themes = set(self._get_available_native_themes())
+        palette = CUSTOM_THEME_PALETTES.get(normalized)
+
+        if palette:
+            target_ttk_theme = self._prepare_custom_theme(style, normalized, palette, available_themes)
+        else:
+            target_ttk_theme = normalized
+            if target_ttk_theme not in available_themes:
+                target_ttk_theme = style.theme_use()
+
+        try:
+            style.theme_use(target_ttk_theme)
+        except tk.TclError:
+            logging.warning("应用主题失败: %s", target_ttk_theme)
+
+        if palette:
+            self._configure_custom_theme(style, palette)
+
+        if hasattr(self, 'root') and palette:
+            try:
+                self.root.configure(bg=palette['background'])
+            except tk.TclError:
+                logging.debug("Root background theme update skipped")
+        elif hasattr(self, 'root'):
+            try:
+                self.root.configure(bg=style.lookup('TFrame', 'background') or '')
+            except tk.TclError:
+                logging.debug("Root background native theme update skipped")
+
+        return normalized
+
+    def _prepare_custom_theme(self, style, theme_name: str, palette, available_themes):
+        custom_theme_name = f'cbss-{theme_name}'
+        if custom_theme_name in available_themes:
+            return custom_theme_name
+
+        parent_theme = CUSTOM_THEME_BASE if CUSTOM_THEME_BASE in available_themes else style.theme_use()
+        try:
+            style.theme_create(custom_theme_name, parent=parent_theme)
+        except tk.TclError:
+            logging.debug("Custom theme create skipped: %s", custom_theme_name)
+        return custom_theme_name if custom_theme_name in set(style.theme_names()) else parent_theme
+
+    def _is_native_theme(self, theme_name: str) -> bool:
+        return self._normalize_theme_name(theme_name) not in CUSTOM_UI_THEMES
+
+    def _rebuild_ui_after_native_theme_change(self):
+        if not hasattr(self, 'root'):
+            return
+        try:
+            self.root.update_idletasks()
+        except tk.TclError:
+            logging.debug("Native theme UI refresh skipped")
+
+    def _configure_custom_theme(self, style, palette):
+        bg = palette['background']
+        fg = palette['foreground']
+        field_bg = palette['fieldbackground']
+        select_bg = palette['selectbackground']
+        select_fg = palette['selectforeground']
+
+        style.configure('.', background=bg, foreground=fg, fieldbackground=field_bg)
+        style.configure('TFrame', background=bg)
+        style.configure('TLabel', background=bg, foreground=fg)
+        style.configure('TLabelframe', background=bg, foreground=fg)
+        style.configure('TLabelframe.Label', background=bg, foreground=fg)
+        style.configure('TButton', background=field_bg, foreground=fg)
+        style.configure('TCheckbutton', background=bg, foreground=fg)
+        style.configure('TRadiobutton', background=bg, foreground=fg)
+        style.configure('TCombobox', fieldbackground=field_bg, foreground=fg)
+        style.configure('Treeview', background=field_bg, fieldbackground=field_bg, foreground=fg)
+        style.configure('Treeview.Heading', background=bg, foreground=fg)
+        style.map('Treeview',
+                  background=[('selected', select_bg)],
+                  foreground=[('selected', select_fg)])
+        style.map('TCombobox',
+                  fieldbackground=[('readonly', field_bg)],
+                  foreground=[('readonly', fg)])
+
+    def _configure_native_theme(self, style):
+        return
+
+    def _setup_cube_status_info_style(self):
+        """配置Cube状态信息栏字体和计数颜色。"""
+        font_size = self.config_manager.getint('CubeStatusInfo', 'font_size', 10)
+        item_font = ('TkDefaultFont', font_size)
+
+        for label_name in (
+            'expire_date_label',
+            'counter_label',
+            'authorized_num_label',
+            'device_status_label',
+            'time_status_label',
+            'network_status_label',
+            'wifi_ssid_label',
+        ):
+            label = getattr(self, label_name, None)
+            if label is not None:
+                label.config(font=item_font)
+
+        if hasattr(self, 'authorized_num_label'):
+            self.authorized_num_label.config(
+                foreground=self.config_manager.get('CubeStatusInfo', 'authorized_count_color', '#0000FF')
+            )
+
+        if hasattr(self, 'counter_label'):
+            self._update_cube_count_colors(self.counter_var.get())
+
+    def _update_cube_count_colors(self, remaining_count):
+        if not hasattr(self, 'counter_label'):
+            return
+
+        color = self._get_remaining_count_color(remaining_count)
+        self.counter_label.config(foreground=color)
+
+    def _get_remaining_count_color(self, remaining_count):
+        try:
+            count = int(remaining_count)
+        except (TypeError, ValueError):
+            count = 0
+
+        if count < 50:
+            return self.config_manager.get('CubeStatusInfo', 'remaining_low_color', '#FF0000')
+        if count < 100:
+            return self.config_manager.get('CubeStatusInfo', 'remaining_medium_color', '#FFD700')
+        return self.config_manager.get('CubeStatusInfo', 'remaining_high_color', '#008000')
+
     def _setup_device_tree_tags(self):
         """配置设备列表的颜色标签和字体样式"""
         style = ttk.Style()
@@ -890,10 +1123,11 @@ class AuthenticatorToolGUI:
         for option in ('foreground', 'background'):
             try:
                 default_map = style.map('Treeview', query_opt=option)
-                filtered_map = [
-                    item for item in default_map
-                    if item[:2] != ('!disabled', '!selected')
-                ]
+                filtered_map = []
+                for item in default_map:
+                    states = item[:-1]
+                    if any(state in states for state in ('selected', 'disabled')):
+                        filtered_map.append(item)
                 style.map(DEVICE_LIST_STYLE, **{option: filtered_map})
             except tk.TclError:
                 logging.debug("Treeview style map adjustment skipped for %s", option)
@@ -964,8 +1198,13 @@ class AuthenticatorToolGUI:
         file_path = filedialog.askopenfilename(title=self.prompt_mgr.get('MenuItems.load_config'), filetypes=[('INI文件','*.ini'),('所有文件','*.*')])
         if file_path:
             self.config_manager.load_config(file_path)
+            applied_theme = self.apply_configured_theme()
+            if hasattr(self, 'theme_menu_var'):
+                self.theme_menu_var.set(applied_theme)
             if hasattr(self, 'device_tree'):
                 self._setup_device_tree_tags()
+            if hasattr(self, 'counter_label'):
+                self._setup_cube_status_info_style()
             # 配置重载后，同步自动授权开关
             auto_enabled = self.config_manager.getboolean('General', 'auto_activation_enabled', False)
             self.auth_manager.set_auto_activation_enabled(auto_enabled)

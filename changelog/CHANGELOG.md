@@ -1,5 +1,25 @@
 # CBSS工具更新日志
 
+## v3.4.0 (2026-05-15)
+
+### 功能增强
+1. **UI 主题配置**
+   - 新增 `[Theme] current` 配置，支持启动时应用主题
+   - 工具菜单新增“主题选择”，支持运行时切换并保存主题
+   - 支持 `modern`、`aero`、`light`、`dark` 自定义主题，并动态列出当前 Tk 支持的原生主题
+   - 新增 `aero` 浅蓝灰 Windows 风格主题
+   - 兼容 `moderm` 拼写并自动归一为 `modern`
+   - 自定义主题使用独立 `cbss-*` ttk 主题，避免影响 `clam`、`vista` 等原生主题显示
+
+## v3.3.0 (2026-05-15)
+
+### 功能增强
+1. **Cube 状态信息栏样式配置**
+   - 新增 `[CubeStatusInfo] font_size`，支持配置 Cube 状态信息栏字体大小
+   - 新增 `authorized_count_color`，支持配置已授权数字体颜色
+   - 新增剩余可授权数 low/medium/high 分档颜色配置
+   - 剩余数分档：low < 50，medium 为 50-99，high >= 100
+
 ## v3.2.3 (2026-05-15)
 
 ### 问题修复

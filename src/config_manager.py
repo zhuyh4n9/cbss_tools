@@ -149,7 +149,7 @@ class ConfigManager:
         self.config.add_section('General')
         self.config.set('General', 'refresh_rate', '1')
         self.config.set('General', 'adb_path', 'adb/adb.exe')
-        self.config.set('General', 'version', '3.2.3')
+        self.config.set('General', 'version', '3.4.0')
         self.config.set('General', 'auto_activation_enabled', 'false')
 
         # UI配置
@@ -177,5 +177,17 @@ class ConfigManager:
         self.config.set('DeviceList', 'color_unauthorized', '#000000')
         self.config.set('DeviceList', 'color_authorization_failure', '#FF0000')
         self.config.set('DeviceList', 'color_pirated', DEFAULT_PIRATED_COLOR)
+
+        # Cube状态信息显示配置
+        self.config.add_section('CubeStatusInfo')
+        self.config.set('CubeStatusInfo', 'font_size', '10')
+        self.config.set('CubeStatusInfo', 'authorized_count_color', '#0000FF')
+        self.config.set('CubeStatusInfo', 'remaining_low_color', '#FF0000')
+        self.config.set('CubeStatusInfo', 'remaining_medium_color', '#FFD700')
+        self.config.set('CubeStatusInfo', 'remaining_high_color', '#008000')
+
+        # 主题配置
+        self.config.add_section('Theme')
+        self.config.set('Theme', 'current', 'modern')
 
         logging.info("已加载默认配置")

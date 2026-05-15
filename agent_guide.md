@@ -5,7 +5,7 @@
 
 ---
 
-## 全量架构（v3.2.3）
+## 全量架构（v3.4.0）
 
 ### 数据流
 1. **设备探测**：`DeviceMonitor` 通过 `IDeviceDetector` 列表轮询：
@@ -236,6 +236,8 @@
 | `AuthenticatorToolGUI.update_device_display(devices)` | 更新设备列表显示（线程安全入队，含状态中文化） |
 | `AuthenticatorToolGUI.on_monitor_error(error)` | 处理监控错误（线程安全入队） |
 | `AuthenticatorToolGUI.create_menu_bar()` | 创建菜单栏（文件/工具/诊断/帮助/关于） |
+| `AuthenticatorToolGUI.apply_configured_theme()` | 从 `[Theme] current` 读取并应用 UI 主题 |
+| `AuthenticatorToolGUI.change_theme(theme_name)` | 工具菜单切换主题并保存配置 |
 | `AuthenticatorToolGUI._setup_device_tree_tags()` | 配置设备列表颜色标签、字体样式和表头样式（从 [DeviceList] 读取，加载配置后重新应用） |
 | `AuthenticatorToolGUI._get_status_tag(status_lower)` | 将设备状态映射为 Treeview tag 名称 |
 | `AuthenticatorToolGUI._apply_device_rows(rows)` | 将设备行数据写入 Treeview 并应用颜色标签 |
@@ -267,7 +269,7 @@
   - `Authorized = 已授权`
   - `Unauthorized = 未授权`
   - `AuthorizationFailure = 授权失败`
-  - `Pirated = 盗版`
+  - `Pirated = 异常设备`
   - `Unknown = 未知`
   - `Checking = 检测中...`
 - 状态翻译在 `update_device_display()` 中通过 `PromptManager.get()` 获取
@@ -280,11 +282,30 @@
   - `color_authorized`：已授权设备字体颜色（默认 #008000 绿色）
   - `color_unauthorized`：未授权设备字体颜色（默认 #000000 黑色）
   - `color_authorization_failure`：授权失败设备字体颜色（默认 #FF0000 红色）
-  - `color_pirated`：盗版设备字体颜色（默认 #8B4513 褐色）
+  - `color_pirated`：异常设备字体颜色（默认 #8B4513 褐色）
 - 设备列表占位文本（如 UUID 不可用/获取中）通过 `config/prompt_chn.ini` 的 `[DeviceTable]` 节配置
 - 颜色通过 `ttk.Treeview` 的 `tag_configure` 实现，在 `_setup_device_tree_tags()` 中初始化；同时清理 `DeviceList.Treeview` 未选中行的 foreground/background map，避免 Windows ttk 主题覆盖 tag 颜色；加载新配置后会重新应用
 - 字体大小和加粗通过 `ttk.Style` 的 `configure` 设置到列表和表头，行高自动适配字体大小
 - `ConfigManager._migrate_config_defaults()` 会将历史默认盗版颜色 `#FFD700` 迁移为 `#8B4513`，其它自定义颜色保持不变
+
+### Cube 状态信息栏显示配置
+- 通过 `config/default_config.ini` 的 `[CubeStatusInfo]` 节配置 Cube 信息区域的显示样式：
+  - `font_size`：状态信息值字体大小（默认 10）
+  - `authorized_count_color`：已授权数字体颜色（默认 #0000FF 蓝色）
+  - `remaining_low_color`：剩余可授权数 low 状态颜色，剩余 < 50（默认 #FF0000 红色）
+  - `remaining_medium_color`：剩余可授权数 medium 状态颜色，50 <= 剩余 < 100（默认 #FFD700 黄色）
+  - `remaining_high_color`：剩余可授权数 high 状态颜色，剩余 >= 100（默认 #008000 绿色）
+- `AuthenticatorToolGUI._setup_cube_status_info_style()` 在创建 UI 和加载配置后应用字体与固定颜色
+- `AuthenticatorToolGUI._update_cube_count_colors()` 在 Cube 信息刷新时按剩余可授权数更新颜色
+
+### UI 主题配置
+- 通过 `config/default_config.ini` 的 `[Theme] current` 配置启动主题，默认 `modern`
+- 工具菜单 `主题选择` 可切换主题并立即保存配置
+- 自定义主题：`modern` / `aero` / `light` / `dark`
+- 原生主题：运行时通过 `ttk.Style().theme_names()` 动态读取并加入菜单（如 `clam` / `vista` / `alt` / `classic` / `xpnative` 等，取决于当前 Tk 环境）
+- 兼容历史/误拼写 `moderm`，内部会归一为 `modern`
+- `modern` / `aero` / `light` / `dark` 使用独立 `cbss-*` ttk 主题，避免污染 `clam` / `vista` 等原生主题
+- `aero` 为浅蓝灰 Windows 风格主题，匹配浅蓝灰背景、白色输入区域和蓝色强调色
 
 ### DeviceParser kick 操作
 - `kick()` 遍历 ready/await 队列中所有 dirty 设备，调用 `refreshDeviceMeta`

@@ -38,9 +38,13 @@ def _load_main_gui_module():
 class _FakeRoot:
     def __init__(self):
         self.after_calls = []
+        self.options = {}
 
     def after(self, delay, callback):
         self.after_calls.append((delay, callback))
+
+    def configure(self, **kwargs):
+        self.options.update(kwargs)
 
 
 class _FakeConfig:
@@ -58,6 +62,12 @@ class _FakeConfig:
     def get(self, *_args, **_kwargs):
         key = (_args[0], _args[1]) if len(_args) >= 2 else None
         return self.values.get(key, '#000000')
+
+    def set(self, section, key, value):
+        self.values[(section, key)] = value
+
+    def save_config(self, *_args, **_kwargs):
+        return True
 
 
 class _FakeAuthManager:
@@ -88,11 +98,22 @@ class _FakePromptManager:
 
 
 class _FakeVar:
-    def __init__(self):
-        self.value = ""
+    def __init__(self, value=""):
+        self.value = value
 
     def set(self, value):
         self.value = value
+
+    def get(self):
+        return self.value
+
+
+class _FakeLabel:
+    def __init__(self):
+        self.options = {}
+
+    def config(self, **kwargs):
+        self.options.update(kwargs)
 
 
 class _FakeTree:
@@ -108,6 +129,8 @@ class _FakeStyle:
         self.configured = {}
         self.maps = {}
         self.source_maps = maps or {}
+        self.current_theme = "default"
+        self.available_themes = ["clam", "vista", "alt"]
 
     def configure(self, style_name, **kwargs):
         self.configured[style_name] = kwargs
@@ -116,6 +139,21 @@ class _FakeStyle:
         if query_opt is not None:
             return self.source_maps.get((style_name, query_opt), [])
         self.maps.setdefault(style_name, {}).update(kwargs)
+
+    def theme_names(self):
+        return tuple(self.available_themes)
+
+    def theme_use(self, theme_name=None):
+        if theme_name is None:
+            return self.current_theme
+        self.current_theme = theme_name
+
+    def theme_create(self, theme_name, parent=None):
+        if theme_name not in self.available_themes:
+            self.available_themes.append(theme_name)
+
+    def lookup(self, style_name, option):
+        return ""
 
 
 class TestMainGuiThreading(unittest.TestCase):
@@ -235,8 +273,113 @@ class TestMainGuiThreading(unittest.TestCase):
             ("selected", "#FFFFFF"),
             fake_style.maps["DeviceList.Treeview"]["foreground"],
         )
+        self.assertIn(
+            ("disabled", "#888888"),
+            fake_style.maps["DeviceList.Treeview"]["foreground"],
+        )
         self.assertEqual(gui.device_tree.tags["authorized"]["foreground"], "#00AA00")
         self.assertEqual(gui.device_tree.tags["pirated"]["foreground"], "#CCCC00")
+
+    def test_cube_status_info_style_uses_configured_font_and_colors(self):
+        gui = self._make_gui()
+        gui.config_manager = _FakeConfig({
+            ("CubeStatusInfo", "font_size"): 16,
+            ("CubeStatusInfo", "authorized_count_color"): "#123456",
+            ("CubeStatusInfo", "remaining_low_color"): "#AA0000",
+            ("CubeStatusInfo", "remaining_medium_color"): "#AA7700",
+            ("CubeStatusInfo", "remaining_high_color"): "#00AA00",
+        })
+        gui.counter_var = _FakeVar("75")
+        gui.expire_date_label = _FakeLabel()
+        gui.counter_label = _FakeLabel()
+        gui.authorized_num_label = _FakeLabel()
+        gui.device_status_label = _FakeLabel()
+        gui.time_status_label = _FakeLabel()
+        gui.network_status_label = _FakeLabel()
+        gui.wifi_ssid_label = _FakeLabel()
+
+        gui._setup_cube_status_info_style()
+
+        self.assertEqual(gui.counter_label.options["font"], ("TkDefaultFont", 16))
+        self.assertEqual(gui.device_status_label.options["font"], ("TkDefaultFont", 16))
+        self.assertEqual(gui.authorized_num_label.options["foreground"], "#123456")
+        self.assertEqual(gui.counter_label.options["foreground"], "#AA7700")
+
+    def test_remaining_count_color_thresholds(self):
+        gui = self._make_gui()
+        gui.config_manager = _FakeConfig({
+            ("CubeStatusInfo", "remaining_low_color"): "#LOW",
+            ("CubeStatusInfo", "remaining_medium_color"): "#MED",
+            ("CubeStatusInfo", "remaining_high_color"): "#HIGH",
+        })
+
+        self.assertEqual(gui._get_remaining_count_color(49), "#LOW")
+        self.assertEqual(gui._get_remaining_count_color(50), "#MED")
+        self.assertEqual(gui._get_remaining_count_color(99), "#MED")
+        self.assertEqual(gui._get_remaining_count_color(100), "#HIGH")
+
+    def test_apply_custom_theme_uses_clam_base_and_palette(self):
+        gui = self._make_gui()
+        gui.config_manager = _FakeConfig({("Theme", "current"): "dark"})
+        fake_style = _FakeStyle()
+
+        with mock.patch.object(self.main_gui.ttk, "Style", return_value=fake_style, create=True):
+            applied = gui.apply_configured_theme()
+
+        self.assertEqual(applied, "dark")
+        self.assertEqual(fake_style.current_theme, "cbss-dark")
+        self.assertEqual(fake_style.configured["TFrame"]["background"], "#202124")
+        self.assertEqual(fake_style.configured["Treeview"]["foreground"], "#E8EAED")
+        self.assertEqual(gui.root.options["bg"], "#202124")
+
+    def test_theme_alias_and_change_theme_persist_config(self):
+        gui = self._make_gui()
+        gui.config_manager = _FakeConfig()
+        gui.theme_menu_var = _FakeVar()
+        fake_style = _FakeStyle()
+
+        with mock.patch.object(self.main_gui.ttk, "Style", return_value=fake_style, create=True):
+            gui.change_theme("moderm")
+
+        self.assertEqual(gui.config_manager.values[("Theme", "current")], "modern")
+        self.assertEqual(gui.theme_menu_var.value, "modern")
+        self.assertEqual(fake_style.current_theme, "cbss-modern")
+
+    def test_native_theme_uses_available_ttk_theme(self):
+        gui = self._make_gui()
+        fake_style = _FakeStyle()
+
+        with mock.patch.object(self.main_gui.ttk, "Style", return_value=fake_style, create=True):
+            applied = gui._apply_theme("vista")
+
+        self.assertEqual(applied, "vista")
+        self.assertEqual(fake_style.current_theme, "vista")
+
+    def test_selectable_themes_include_custom_and_native_themes(self):
+        gui = self._make_gui()
+        fake_style = _FakeStyle()
+
+        with mock.patch.object(self.main_gui.ttk, "Style", return_value=fake_style, create=True):
+            themes = gui._get_selectable_themes()
+
+        self.assertEqual(themes[:4], ("modern", "aero", "light", "dark"))
+        self.assertIn("clam", themes)
+        self.assertIn("vista", themes)
+        self.assertIn("alt", themes)
+
+    def test_aero_theme_uses_screenshot_like_palette(self):
+        gui = self._make_gui()
+        gui.config_manager = _FakeConfig({("Theme", "current"): "aero"})
+        fake_style = _FakeStyle()
+
+        with mock.patch.object(self.main_gui.ttk, "Style", return_value=fake_style, create=True):
+            applied = gui.apply_configured_theme()
+
+        self.assertEqual(applied, "aero")
+        self.assertEqual(fake_style.current_theme, "cbss-aero")
+        self.assertEqual(fake_style.configured["TFrame"]["background"], "#EEF3FA")
+        self.assertEqual(fake_style.configured["Treeview"]["fieldbackground"], "#FFFFFF")
+        self.assertEqual(gui.root.options["bg"], "#EEF3FA")
 
     def test_on_monitor_error_from_background_thread_queues_ui_task(self):
         gui = self._make_gui()
