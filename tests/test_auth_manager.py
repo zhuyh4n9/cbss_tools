@@ -2,6 +2,7 @@ import unittest
 
 from src.adb_manager import CommandResult, DeviceInfo, AuthenticatorInfo
 from src.auth_manager import AuthenticationManager
+from src.target_device import ITargetDevice
 
 
 class _FakeConfig:
@@ -31,6 +32,8 @@ class _FakeDeviceMonitor:
         self.sim_detector = _FakeSimDetector()
         self._simulated_cubes = {}
         self.target_devices = []
+        self._connected_index = {}
+        self._target_device_cache = {}
 
     def refresh_all_cube(self):
         self.refresh_all_cube_calls += 1
@@ -47,6 +50,17 @@ class _FakeDeviceMonitor:
 
     def is_simulated_cube(self, serial: str) -> bool:
         return False
+
+    def get_target_device(self, serial: str, create_if_missing: bool = False):
+        key = str(serial)
+        if key not in self._target_device_cache:
+            self._target_device_cache[key] = ITargetDevice.CreateSimulation(
+                status="Unauthorized", serial_number=key
+            )
+        return self._target_device_cache[key]
+
+    def get_device_by_serial(self, serial: str):
+        return self._connected_index.get(str(serial))
 
 
 class _FailingRefreshDeviceMonitor(_FakeDeviceMonitor):
@@ -125,18 +139,15 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
 
         self.assertTrue(result["success"])
         self.assertEqual(fake_monitor.refresh_all_cube_calls, 1)
-        self.assertIn("activate_device", events)
+        self.assertIn("authenticator_sign", events)
         self.assertIn("refresh_all_cube", events)
-        self.assertIn("verify_device_state", events)
-        self.assertEqual(events.count("activate_device"), 1)
+        self.assertEqual(events.count("authenticator_sign"), 1)
         self.assertEqual(events.count("refresh_all_cube"), 1)
-        self.assertEqual(events.count("verify_device_state"), 1)
         positions = {
             name: events.index(name)
-            for name in ("activate_device", "refresh_all_cube", "verify_device_state")
+            for name in ("authenticator_sign", "refresh_all_cube")
         }
-        self.assertLess(positions["activate_device"], positions["refresh_all_cube"])
-        self.assertLess(positions["refresh_all_cube"], positions["verify_device_state"])
+        self.assertLess(positions["authenticator_sign"], positions["refresh_all_cube"])
 
     def test_refresh_cube_error_does_not_break_authentication(self):
         fake_monitor = _FailingRefreshDeviceMonitor()

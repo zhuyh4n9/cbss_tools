@@ -7,6 +7,9 @@ import os
 import logging
 from typing import Dict, Any
 
+LEGACY_PIRATED_COLOR = '#FFD700'
+DEFAULT_PIRATED_COLOR = '#8B4513'
+
 
 class ConfigManager:
     def __init__(self, config_file: str = None):
@@ -22,6 +25,7 @@ class ConfigManager:
         if os.path.exists(self.config_file):
             try:
                 self.config.read(self.config_file, encoding='utf-8')
+                self._migrate_config_defaults()
                 logging.info(f"配置文件已加载: {self.config_file}")
             except Exception as e:
                 logging.error(f"加载配置文件失败: {e}")
@@ -130,13 +134,22 @@ class ConfigManager:
             logging.error(f"获取WiFi历史记录失败: {e}")
             return {'ssid': '', 'password': '', 'security': 'wpa2'}
 
+    def _migrate_config_defaults(self):
+        """升级历史默认值，保留用户显式配置的其它自定义值。"""
+        if not self.config.has_section('DeviceList'):
+            return
+
+        color_pirated = self.get('DeviceList', 'color_pirated', '').strip()
+        if color_pirated.lower() == LEGACY_PIRATED_COLOR.lower():
+            self.config.set('DeviceList', 'color_pirated', DEFAULT_PIRATED_COLOR)
+
     def _load_default_config(self):
         """加载默认配置"""
         # 基本配置
         self.config.add_section('General')
         self.config.set('General', 'refresh_rate', '1')
         self.config.set('General', 'adb_path', 'adb/adb.exe')
-        self.config.set('General', 'version', '3.1.4')
+        self.config.set('General', 'version', '3.2.3')
         self.config.set('General', 'auto_activation_enabled', 'false')
 
         # UI配置
@@ -155,5 +168,14 @@ class ConfigManager:
         self.config.add_section('About')
         self.config.set('About', 'company', 'Autochips Inc')
         self.config.set('About', 'description', 'AC8267激活工具')
+
+        # 设备列表显示配置
+        self.config.add_section('DeviceList')
+        self.config.set('DeviceList', 'font_size', '12')
+        self.config.set('DeviceList', 'font_bold', 'false')
+        self.config.set('DeviceList', 'color_authorized', '#008000')
+        self.config.set('DeviceList', 'color_unauthorized', '#000000')
+        self.config.set('DeviceList', 'color_authorization_failure', '#FF0000')
+        self.config.set('DeviceList', 'color_pirated', DEFAULT_PIRATED_COLOR)
 
         logging.info("已加载默认配置")

@@ -82,6 +82,13 @@ def _load_dependencies(prefix):
 NETWORK_MONITOR_THREAD_JOIN_TIMEOUT = 0.1
 UI_QUEUE_DRAIN_INTERVAL_MS = 16
 MAX_UI_TASKS_PER_DRAIN = 20
+DEVICE_LIST_STYLE = 'DeviceList.Treeview'
+DEVICE_LIST_STATUS_TAGS = {
+    'authorized': 'authorized',
+    'unauthorized': 'unauthorized',
+    'authorizationfailure': 'authorization_failure',
+    'pirated': 'pirated',
+}
 
 class AuthenticatorToolGUI:
     def __init__(self):
@@ -131,7 +138,10 @@ class AuthenticatorToolGUI:
             logging.info("所有管理器初始化完成")
 
         except Exception as e:
-            messagebox.showerror("初始化错误", f"初始化管理器失败: {str(e)}")
+            messagebox.showerror(
+                self.prompt_mgr.get('Dialogs.init_error_title'),
+                self.prompt_mgr.format('Dialogs.init_error_msg', error=str(e))
+            )
             logging.error(f"初始化管理器失败: {e}")
 
     def setup_ui(self):
@@ -325,10 +335,13 @@ class AuthenticatorToolGUI:
             self.prompt_mgr.get('DeviceTable.col_status'),
             self.prompt_mgr.get('DeviceTable.col_action')
         )
-        self.device_tree = ttk.Treeview(device_frame, columns=device_columns, show='headings')
+        self.device_tree = ttk.Treeview(device_frame, columns=device_columns, show='headings', style=DEVICE_LIST_STYLE)
         for col in device_columns:
             self.device_tree.heading(col, text=col)
             # width logic omitted for brevity
+
+        self._setup_device_tree_tags()
+
         device_scrollbar_v = ttk.Scrollbar(device_frame, orient=tk.VERTICAL, command=self.device_tree.yview)
         device_scrollbar_h = ttk.Scrollbar(device_frame, orient=tk.HORIZONTAL, command=self.device_tree.xview)
         self.device_tree.configure(yscrollcommand=device_scrollbar_v.set, xscrollcommand=device_scrollbar_h.set)
@@ -563,7 +576,15 @@ class AuthenticatorToolGUI:
             self.authorized_num_var.set(str(auth_info.authorized_device_num))
 
             # 更新时间状态 (NEW in Update 4)
-            self.time_status_var.set(auth_info.time_status if auth_info.time_status else "-")
+            if (auth_info.time_status == "Ready"):
+                self.time_status_label.config(foreground="green")
+                self.time_status_var.set(self.prompt_mgr.get('Status.time_status_ready'))
+            elif (auth_info.time_status == "Not Ready"):
+                self.time_status_label.config(foreground="gray")
+                self.time_status_var.set(self.prompt_mgr.get('Status.time_status_not_ready'))
+            else:
+                self.time_status_label.config(foreground="gray")
+                self.time_status_var.set(self.prompt_mgr.get('Status.time_status_unknown'))
 
             # 更新设备状态信息
             self.update_device_status_display(auth_info.device_status)
@@ -783,12 +804,16 @@ class AuthenticatorToolGUI:
                 status_text = "Checking..."
             status_lower = status_text.lower()
 
+            display_status = self.prompt_mgr.get(f'DeviceStatus.{status_text}', status_text)
+            if display_status == f'DeviceStatus.{status_text}':
+                display_status = self.prompt_mgr.get(f'DeviceStatus.{status_text.title()}', status_text)
+
             uuid_text = (device.uuid or "").strip()
             is_unknown_like = status_lower in ("unknown", "unknown device")
             if device.device_type == "unknown" or (not uuid_text and is_unknown_like):
-                uuid_display = "N/A"
+                uuid_display = self.prompt_mgr.get('DeviceTable.uuid_unavailable', 'N/A')
             else:
-                uuid_display = uuid_text if uuid_text else "获取中..."
+                uuid_display = uuid_text if uuid_text else self.prompt_mgr.get('DeviceTable.uuid_fetching', '获取中...')
 
             if auto_enabled:
                 if status_lower == "authorizationfailure":
@@ -808,8 +833,9 @@ class AuthenticatorToolGUI:
                 "serial:" + str(device.serial),
                 uuid_display,
                 device.usb_port,
-                status_text,
-                heading
+                display_status,
+                heading,
+                status_lower
             ))
 
         self._dispatch_ui_task(self._apply_device_rows, rows)
@@ -833,6 +859,47 @@ class AuthenticatorToolGUI:
             self.auto_auth_tip_var.set("")
             if hasattr(self, 'activate_all_button'):
                 self.activate_all_button.config(state='normal')
+
+    def _setup_device_tree_tags(self):
+        """配置设备列表的颜色标签和字体样式"""
+        style = ttk.Style()
+        font_size = self.config_manager.getint('DeviceList', 'font_size', 12)
+        font_bold = self.config_manager.getboolean('DeviceList', 'font_bold', False)
+        font_weight = 'bold' if font_bold else 'normal'
+        font_name = 'TkDefaultFont'
+        item_font = (font_name, font_size, font_weight)
+
+        style.configure(DEVICE_LIST_STYLE,
+                        font=item_font,
+                        rowheight=max(20, font_size * 2 + 4))
+        style.configure(f'{DEVICE_LIST_STYLE}.Heading', font=item_font)
+        self._allow_device_tree_tags_to_override_style(style)
+
+        color_authorized = self.config_manager.get('DeviceList', 'color_authorized', '#008000')
+        color_unauthorized = self.config_manager.get('DeviceList', 'color_unauthorized', '#000000')
+        color_auth_failure = self.config_manager.get('DeviceList', 'color_authorization_failure', '#FF0000')
+        color_pirated = self.config_manager.get('DeviceList', 'color_pirated', '#8B4513')
+
+        self.device_tree.tag_configure('authorized', foreground=color_authorized, font=item_font)
+        self.device_tree.tag_configure('unauthorized', foreground=color_unauthorized, font=item_font)
+        self.device_tree.tag_configure('authorization_failure', foreground=color_auth_failure, font=item_font)
+        self.device_tree.tag_configure('pirated', foreground=color_pirated, font=item_font)
+
+    def _allow_device_tree_tags_to_override_style(self, style):
+        """Let row tags control normal text color on ttk themes that map Treeview foreground."""
+        for option in ('foreground', 'background'):
+            try:
+                default_map = style.map('Treeview', query_opt=option)
+                filtered_map = [
+                    item for item in default_map
+                    if item[:2] != ('!disabled', '!selected')
+                ]
+                style.map(DEVICE_LIST_STYLE, **{option: filtered_map})
+            except tk.TclError:
+                logging.debug("Treeview style map adjustment skipped for %s", option)
+
+    def _get_status_tag(self, status_lower: str):
+        return DEVICE_LIST_STATUS_TAGS.get(status_lower)
 
     def _apply_device_rows(self, rows: List[tuple]):
         """在主线程应用设备表格数据"""
@@ -861,7 +928,10 @@ class AuthenticatorToolGUI:
 
         serial_to_item = {}
         for row in rows:
-            item_id = self.device_tree.insert('', 'end', values=row)
+            status_lower = str(row[5]).strip().lower() if len(row) > 5 else ""
+            tag = self._get_status_tag(status_lower)
+            tags = (tag,) if tag else ()
+            item_id = self.device_tree.insert('', 'end', values=row, tags=tags)
             serial_text = str(row[0]) if len(row) > 0 else ""
             serial = serial_text.split('serial:')[-1] if serial_text.startswith('serial:') else serial_text
             if serial:
@@ -894,6 +964,8 @@ class AuthenticatorToolGUI:
         file_path = filedialog.askopenfilename(title=self.prompt_mgr.get('MenuItems.load_config'), filetypes=[('INI文件','*.ini'),('所有文件','*.*')])
         if file_path:
             self.config_manager.load_config(file_path)
+            if hasattr(self, 'device_tree'):
+                self._setup_device_tree_tags()
             # 配置重载后，同步自动授权开关
             auto_enabled = self.config_manager.getboolean('General', 'auto_activation_enabled', False)
             self.auth_manager.set_auto_activation_enabled(auto_enabled)
@@ -1484,10 +1556,13 @@ class AuthenticatorToolGUI:
             item = self.device_tree.item(selection[0])
             device_serial = item['values'][0].split('serial:')[-1]
             uuid_text = item['values'][1] if len(item['values']) > 1 else ""
-            auth_status = item['values'][3]
+            auth_status = item['values'][5] if len(item['values']) > 5 else item['values'][3]
             if auth_status.strip().lower() == 'unauthorized':
                 if not self._is_uuid_ready(uuid_text):
-                    messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), f"设备 {device_serial} 的UUID尚未获取完成，暂不允许激活")
+                    messagebox.showwarning(
+                        self.prompt_mgr.get('Common.warn_title'),
+                        self._format_device_uuid_pending(device_serial)
+                    )
                     return
                 self.authenticate_device(device_serial)
             else:
@@ -1496,7 +1571,31 @@ class AuthenticatorToolGUI:
     def _is_uuid_ready(self, uuid_text: str) -> bool:
         """判断UUID是否已准备好"""
         value = (uuid_text or "").strip()
-        return value not in ("", "-", "获取中...", "Checking...")
+        pending_values = {
+            "",
+            "-",
+            self.prompt_mgr.get('DeviceTable.uuid_fetching', '获取中...'),
+            self.prompt_mgr.get('DeviceTable.uuid_unavailable', 'N/A'),
+            self.prompt_mgr.get('DeviceStatus.Checking', 'Checking...'),
+            "获取中...",
+            "N/A",
+            "Checking...",
+        }
+        return value not in pending_values
+
+    def _format_device_uuid_pending(self, device_serial: str) -> str:
+        return self.prompt_mgr.format(
+            'Errors.device_uuid_pending',
+            default='设备 {device} 的UUID尚未获取完成，暂不允许激活',
+            device=device_serial
+        )
+
+    def _format_devices_uuid_pending(self, device_serials: List[str]) -> str:
+        return self.prompt_mgr.format(
+            'Errors.devices_uuid_pending_batch',
+            default='以下设备UUID尚未获取完成，暂不允许批量激活:\n{devices}',
+            devices="\n".join(device_serials)
+        )
 
     def _on_device_right_click(self, event):
         """右键菜单：移除模拟设备"""
@@ -1702,7 +1801,7 @@ class AuthenticatorToolGUI:
         # UUID未准备好时不允许激活
         uuid_text = self._get_uuid_by_serial_from_tree(device_serial)
         if not self._is_uuid_ready(uuid_text):
-            messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), f"设备 {device_serial} 的UUID尚未获取完成，暂不允许激活")
+            messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self._format_device_uuid_pending(device_serial))
             return
 
         # 获取可用的激活盒子
@@ -1751,7 +1850,7 @@ class AuthenticatorToolGUI:
         if invalid_devices:
             messagebox.showwarning(
                 self.prompt_mgr.get('Common.warn_title'),
-                "以下设备UUID尚未获取完成，暂不允许批量激活:\n" + "\n".join(invalid_devices)
+                self._format_devices_uuid_pending(invalid_devices)
             )
             return
 
@@ -1767,7 +1866,7 @@ class AuthenticatorToolGUI:
         """执行设备激活"""
         uuid_text = self._get_uuid_by_serial_from_tree(device_serial)
         if not self._is_uuid_ready(uuid_text):
-            messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), f"设备 {device_serial} 的UUID尚未获取完成，暂不允许激活")
+            messagebox.showwarning(self.prompt_mgr.get('Common.warn_title'), self._format_device_uuid_pending(device_serial))
             return
 
         self.is_operation_in_progress = True
@@ -1802,7 +1901,7 @@ class AuthenticatorToolGUI:
         if not_ready:
             messagebox.showwarning(
                 self.prompt_mgr.get('Common.warn_title'),
-                "以下设备UUID尚未获取完成，暂不允许批量激活:\n" + "\n".join(not_ready)
+                self._format_devices_uuid_pending(not_ready)
             )
             return
 

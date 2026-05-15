@@ -44,8 +44,20 @@ class _FakeRoot:
 
 
 class _FakeConfig:
+    def __init__(self, values=None):
+        self.values = values or {}
+
     def getboolean(self, *_args, **_kwargs):
-        return False
+        key = (_args[0], _args[1]) if len(_args) >= 2 else None
+        return self.values.get(key, False)
+
+    def getint(self, *_args, **_kwargs):
+        key = (_args[0], _args[1]) if len(_args) >= 2 else None
+        return self.values.get(key, 10)
+
+    def get(self, *_args, **_kwargs):
+        key = (_args[0], _args[1]) if len(_args) >= 2 else None
+        return self.values.get(key, '#000000')
 
 
 class _FakeAuthManager:
@@ -60,8 +72,16 @@ class _FakeAuthManager:
 
 
 class _FakePromptManager:
-    def get(self, key):
-        return key
+    values = {
+        "DeviceTable.uuid_fetching": "UUID加载中",
+        "DeviceTable.uuid_unavailable": "UUID不可用",
+        "DeviceStatus.Checking": "检测中",
+    }
+
+    def get(self, key, default=None, fallback=None):
+        if key in self.values:
+            return self.values[key]
+        return fallback if fallback is not None else (default if default is not None else key)
 
     def format(self, key, **kwargs):
         return f"{key}:{kwargs}"
@@ -73,6 +93,29 @@ class _FakeVar:
 
     def set(self, value):
         self.value = value
+
+
+class _FakeTree:
+    def __init__(self):
+        self.tags = {}
+
+    def tag_configure(self, tag, **kwargs):
+        self.tags[tag] = kwargs
+
+
+class _FakeStyle:
+    def __init__(self, maps=None):
+        self.configured = {}
+        self.maps = {}
+        self.source_maps = maps or {}
+
+    def configure(self, style_name, **kwargs):
+        self.configured[style_name] = kwargs
+
+    def map(self, style_name, query_opt=None, **kwargs):
+        if query_opt is not None:
+            return self.source_maps.get((style_name, query_opt), [])
+        self.maps.setdefault(style_name, {}).update(kwargs)
 
 
 class TestMainGuiThreading(unittest.TestCase):
@@ -118,6 +161,82 @@ class TestMainGuiThreading(unittest.TestCase):
         self.assertEqual(captured_rows[0][0][self._SERIAL_COLUMN], f"serial:{device.serial}")
         self.assertEqual(captured_rows[0][0][self._STATUS_COLUMN], "Authorized")
         self.assertTrue(gui.root.after_calls)
+
+    def test_update_device_display_uses_configured_uuid_placeholders(self):
+        gui = self._make_gui()
+        captured_rows = []
+        gui._apply_device_rows = lambda rows: captured_rows.append(rows)
+
+        devices = [
+            self.main_gui.DeviceInfo(
+                serial="SIM-UNKNOWN",
+                status="Unknown",
+                device_type="unknown",
+                uuid="",
+                usb_port="SIM",
+            ),
+            self.main_gui.DeviceInfo(
+                serial="SIM-PENDING",
+                status="Unauthorized",
+                device_type="target_device",
+                uuid="",
+                usb_port="SIM",
+            ),
+        ]
+
+        gui.config_manager = _FakeConfig({("UI", "show_na_devices"): True})
+        gui.update_device_display(devices)
+
+        self.assertEqual(captured_rows[0][0][1], "UUID不可用")
+        self.assertEqual(captured_rows[0][1][1], "UUID加载中")
+
+    def test_is_uuid_ready_uses_configured_prompt_placeholders(self):
+        gui = self._make_gui()
+
+        self.assertFalse(gui._is_uuid_ready("UUID加载中"))
+        self.assertFalse(gui._is_uuid_ready("UUID不可用"))
+        self.assertFalse(gui._is_uuid_ready("检测中"))
+        self.assertTrue(gui._is_uuid_ready("550e8400-e29b-41d4-a716-446655440000"))
+
+    def test_setup_device_tree_tags_uses_device_list_config(self):
+        gui = self._make_gui()
+        gui.config_manager = _FakeConfig({
+            ("DeviceList", "font_size"): 18,
+            ("DeviceList", "font_bold"): True,
+            ("DeviceList", "color_authorized"): "#00AA00",
+            ("DeviceList", "color_unauthorized"): "#111111",
+            ("DeviceList", "color_authorization_failure"): "#AA0000",
+            ("DeviceList", "color_pirated"): "#CCCC00",
+        })
+        gui.device_tree = _FakeTree()
+        fake_style = _FakeStyle({
+            ("Treeview", "foreground"): [
+                ("disabled", "#888888"),
+                ("!disabled", "!selected", "#000000"),
+                ("selected", "#FFFFFF"),
+            ],
+            ("Treeview", "background"): [
+                ("!disabled", "!selected", "#FFFFFF"),
+                ("selected", "#0078D7"),
+            ],
+        })
+
+        with mock.patch.object(self.main_gui.ttk, "Style", return_value=fake_style, create=True):
+            gui._setup_device_tree_tags()
+
+        item_font = ("TkDefaultFont", 18, "bold")
+        self.assertEqual(fake_style.configured["DeviceList.Treeview"]["font"], item_font)
+        self.assertEqual(fake_style.configured["DeviceList.Treeview.Heading"]["font"], item_font)
+        self.assertNotIn(
+            ("!disabled", "!selected", "#000000"),
+            fake_style.maps["DeviceList.Treeview"]["foreground"],
+        )
+        self.assertIn(
+            ("selected", "#FFFFFF"),
+            fake_style.maps["DeviceList.Treeview"]["foreground"],
+        )
+        self.assertEqual(gui.device_tree.tags["authorized"]["foreground"], "#00AA00")
+        self.assertEqual(gui.device_tree.tags["pirated"]["foreground"], "#CCCC00")
 
     def test_on_monitor_error_from_background_thread_queues_ui_task(self):
         gui = self._make_gui()
