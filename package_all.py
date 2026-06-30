@@ -21,7 +21,7 @@ class CBSSPackager:
 
     def __init__(self):
         self.project_root = Path.cwd()
-        self.version = "3.1.4"
+        self.version = "3.4.0"
         self.build_date = datetime.now().strftime("%Y-%m-%d")
 
         # 打包目录
@@ -57,7 +57,12 @@ class CBSSPackager:
     def log(self, message, level="INFO"):
         """输出日志"""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        print(f"[{timestamp}] {level}: {message}")
+        line = f"[{timestamp}] {level}: {message}"
+        try:
+            print(line)
+        except UnicodeEncodeError:
+            encoding = sys.stdout.encoding or "utf-8"
+            print(line.encode(encoding, errors="replace").decode(encoding, errors="replace"))
 
     def check_environment(self):
         """检查构建环境"""

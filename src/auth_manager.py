@@ -414,7 +414,16 @@ class AuthenticationManager:
             if progress_callback:
                 progress_callback("正在二次确认设备状态...")
             double_check_status = self.check_device_authentication_status(device_serial, fallback_status=target.getStatus())
-            if double_check_status.strip().lower() != "unauthorized":
+            normalized_double_check_status = double_check_status.strip().lower()
+            if normalized_double_check_status == "unknown" and not self.check_existance(device_serial):
+                error_msg = f"设备 {device_serial} 在激活过程中被移除"
+                self._log_auth_result(log_mgr, False, device_serial, device_uuid, signature, cube_id, error_msg, cube)
+                return {
+                    'success': False,
+                    'message': error_msg,
+                    'details': ''
+                }
+            if normalized_double_check_status != "unauthorized":
                 error_msg = f"设备状态已变化: {double_check_status}"
                 self._log_auth_result(log_mgr, False, device_serial, device_uuid, signature, cube_id, error_msg, cube)
                 return {
@@ -440,13 +449,19 @@ class AuthenticationManager:
                     'details': activate_result.raw_output
                 }
 
-            logging.info(f"设备激活成功: {device_serial}")
             try:
                 self.device_monitor.refresh_all_cube()
             except Exception as refresh_error:
                 logging.warning(f"激活后刷新Cube失败: {refresh_error}")
             verify_status = self.check_device_authentication_status(device_serial)
-            if verify_status.strip().lower() != "authorized":
+            normalized_verify_status = verify_status.strip().lower()
+            if normalized_verify_status == "unknown" and not self.check_existance(device_serial):
+                return {
+                    'success': False,
+                    'message': f'设备 {device_serial} 在激活过程中被移除',
+                    'details': ''
+                }
+            if normalized_verify_status != "authorized":
                 return {
                     'success': False,
                     'message': f'设备激活后状态异常: {verify_status}',
@@ -509,6 +524,45 @@ class AuthenticationManager:
             return str(fallback_status or "Unknown")
         return device.getStatusDirect()
 
+    def check_existance(self, device_serial: str) -> bool:
+        """检查设备是否仍存在于当前监控数据中。"""
+        serial = str(device_serial or "").strip()
+        if not serial:
+            return False
+
+        try:
+            device = self.device_monitor.get_device_by_serial(serial)
+            if device is not None:
+                return True
+        except Exception:
+            pass
+
+        try:
+            target = self.device_monitor.get_target_device(serial, create_if_missing=False)
+            if target is not None:
+                return True
+        except Exception:
+            pass
+
+        try:
+            connected_index = getattr(self.device_monitor, "_connected_index", {}) or {}
+            if serial in connected_index:
+                return True
+        except Exception:
+            pass
+
+        try:
+            for detector in getattr(self.device_monitor, "_detectors", []) or []:
+                if hasattr(detector, "get_device") and detector.get_device(serial) is not None:
+                    return True
+        except Exception:
+            pass
+
+        return False
+
+    def check_existence(self, device_serial: str) -> bool:
+        """Correctly spelled alias for check_existance."""
+        return self.check_existance(device_serial)
 
     def _refresh_device(self, serial: str) -> None:
         if hasattr(self.device_monitor, "mark_device_dirty"):

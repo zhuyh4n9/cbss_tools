@@ -90,7 +90,7 @@ class ADBManager:
             output = result.stdout + result.stderr
             logging.debug(f"ADB命令输出: {output}")
 
-            return self._parse_command_output(output, result.returncode == 0)
+            return self._parse_command_output(serial, output, result.returncode == 0)
 
         except subprocess.TimeoutExpired:
             error_msg = "ADB命令执行超时"
@@ -101,8 +101,9 @@ class ADBManager:
             logging.error(error_msg)
             return CommandResult(False, 1, error_message=error_msg)
 
-    def _parse_command_output(self, output: str, command_success: bool) -> CommandResult:
+    def _parse_command_output(self, serial: str, output: str = None, command_success: bool = None) -> CommandResult:
         """解析命令输出"""
+
         status_code = 0
         result_data = ""
         error_message = ""
@@ -142,7 +143,7 @@ class ADBManager:
                 break
 
         success = (status_code == 0) and command_success
-        # logging.info(f"命令执行结果 - Success: {success}, Status Code: {status_code}, Result: {result_data}, Error: {error_message}")
+        logging.info(f"命令执行结果 - Success: {success}, Status Code: {status_code}, Result: {result_data}, Error: {error_message}")
         # 如果没有明确的错误消息，使用配置中的状态消息
         if not success and not error_message:
             error_message = self.config.get_status_message(str(status_code))

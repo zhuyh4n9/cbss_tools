@@ -2,6 +2,7 @@ import unittest
 
 from src.adb_manager import CommandResult, DeviceInfo, AuthenticatorInfo
 from src.auth_manager import AuthenticationManager
+from src.target_device import ITargetDevice
 
 
 class _FakeConfig:
@@ -31,6 +32,8 @@ class _FakeDeviceMonitor:
         self.sim_detector = _FakeSimDetector()
         self._simulated_cubes = {}
         self.target_devices = []
+        self._connected_index = {}
+        self._target_device_cache = {}
 
     def refresh_all_cube(self):
         self.refresh_all_cube_calls += 1
@@ -47,6 +50,23 @@ class _FakeDeviceMonitor:
 
     def is_simulated_cube(self, serial: str) -> bool:
         return False
+
+    def get_target_device(self, serial: str, create_if_missing: bool = True):
+        key = str(serial)
+        if not create_if_missing and key not in self._target_device_cache:
+            return None
+        if key not in self._target_device_cache:
+            self._target_device_cache[key] = ITargetDevice.CreateSimulation(
+                status="Unauthorized", serial_number=key
+            )
+        return self._target_device_cache[key]
+
+    def get_device_by_serial(self, serial: str):
+        serial = str(serial)
+        for device in self.target_devices:
+            if device.serial == serial:
+                return device
+        return self._connected_index.get(serial)
 
 
 class _FailingRefreshDeviceMonitor(_FakeDeviceMonitor):
@@ -79,6 +99,58 @@ class _FakeAdbManager:
             return CommandResult(success=True, status_code=0, result_data="Authorized", raw_output="Authorized")
         self.events.append("precheck_device_state")
         return CommandResult(success=True, status_code=0, result_data="Unauthorized", raw_output="Unauthorized")
+
+
+class _RemovingStatusTarget:
+    def __init__(self, monitor, status_sequence):
+        self.monitor = monitor
+        self.status_sequence = list(status_sequence)
+        self.activate_called = False
+        self.dirty = False
+
+    def getUuid(self):
+        return "UUID-001"
+
+    def getStatus(self):
+        return "Unauthorized"
+
+    def getStatusDirect(self):
+        status = self.status_sequence.pop(0) if self.status_sequence else "Unknown"
+        if status.strip().lower() == "unknown":
+            self.monitor.mark_removed()
+        return status
+
+    def markDirty(self):
+        self.dirty = True
+
+    def activate(self, signature: str):
+        self.activate_called = True
+        return CommandResult(success=True, status_code=0, result_data="OK", raw_output="OK")
+
+
+class _RemovalDuringAuthDeviceMonitor(_FakeDeviceMonitor):
+    def __init__(self, status_sequence):
+        super().__init__()
+        self.removed = False
+        self.target = _RemovingStatusTarget(self, status_sequence)
+        self._target_device_cache["DEV-001"] = self.target
+        self.target_devices = [DeviceInfo(serial="DEV-001", status="Unauthorized", uuid="UUID-001")]
+        self._connected_index = {"DEV-001": self.target_devices[0]}
+
+    def mark_removed(self):
+        self.removed = True
+        self.target_devices = []
+        self._connected_index.clear()
+
+    def get_target_device(self, serial: str, create_if_missing: bool = True):
+        if self.removed and not create_if_missing:
+            return None
+        return self.target
+
+    def get_device_by_serial(self, serial: str):
+        if self.removed:
+            return None
+        return super().get_device_by_serial(serial)
 
 
 class _TestableAuthenticationManager(AuthenticationManager):
@@ -125,18 +197,15 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
 
         self.assertTrue(result["success"])
         self.assertEqual(fake_monitor.refresh_all_cube_calls, 1)
-        self.assertIn("activate_device", events)
+        self.assertIn("authenticator_sign", events)
         self.assertIn("refresh_all_cube", events)
-        self.assertIn("verify_device_state", events)
-        self.assertEqual(events.count("activate_device"), 1)
+        self.assertEqual(events.count("authenticator_sign"), 1)
         self.assertEqual(events.count("refresh_all_cube"), 1)
-        self.assertEqual(events.count("verify_device_state"), 1)
         positions = {
             name: events.index(name)
-            for name in ("activate_device", "refresh_all_cube", "verify_device_state")
+            for name in ("authenticator_sign", "refresh_all_cube")
         }
-        self.assertLess(positions["activate_device"], positions["refresh_all_cube"])
-        self.assertLess(positions["refresh_all_cube"], positions["verify_device_state"])
+        self.assertLess(positions["authenticator_sign"], positions["refresh_all_cube"])
 
     def test_refresh_cube_error_does_not_break_authentication(self):
         fake_monitor = _FailingRefreshDeviceMonitor()
@@ -162,6 +231,43 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         picked = manager._pick_authenticator()
 
         self.assertEqual(picked, "CUBE-B")
+
+    def test_check_existance_reports_existing_and_removed_device(self):
+        fake_monitor = _FakeDeviceMonitor()
+        manager = AuthenticationManager(adb_manager=_FakeAdbManager(), device_monitor=fake_monitor)
+
+        fake_monitor.target_devices = [DeviceInfo(serial="DEV-001", status="Unauthorized", uuid="UUID-001")]
+        self.assertTrue(manager.check_existance("DEV-001"))
+        self.assertTrue(manager.check_existence("DEV-001"))
+
+        fake_monitor.target_devices = []
+        fake_monitor._target_device_cache.clear()
+        fake_monitor._connected_index.clear()
+        self.assertFalse(manager.check_existance("DEV-001"))
+
+    def test_removed_device_during_double_check_returns_specific_message(self):
+        fake_monitor = _RemovalDuringAuthDeviceMonitor(status_sequence=["Unknown"])
+        fake_adb_manager = _FakeAdbManager()
+        manager = AuthenticationManager(adb_manager=fake_adb_manager, device_monitor=fake_monitor)
+
+        result = manager._perform_authentication("DEV-001", "CUBE-001")
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["message"], "设备 DEV-001 在激活过程中被移除")
+        self.assertFalse(fake_monitor.target.activate_called)
+        self.assertNotIn("activate_device", fake_adb_manager.events)
+
+    def test_removed_device_after_activate_returns_specific_message(self):
+        fake_monitor = _RemovalDuringAuthDeviceMonitor(status_sequence=["Unauthorized", "Unknown"])
+        fake_adb_manager = _FakeAdbManager()
+        manager = AuthenticationManager(adb_manager=fake_adb_manager, device_monitor=fake_monitor)
+
+        result = manager._perform_authentication("DEV-001", "CUBE-001")
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["message"], "设备 DEV-001 在激活过程中被移除")
+        self.assertTrue(fake_monitor.target.activate_called)
+        self.assertEqual(fake_monitor.refresh_all_cube_calls, 1)
 
     def test_unauthorized_enqueue_clears_auto_completed_flag(self):
         fake_monitor = _FakeDeviceMonitor()

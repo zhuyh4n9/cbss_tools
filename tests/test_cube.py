@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 from src.adb_manager import CommandResult, AuthenticatorInfo
 from src.auth_manager import AuthenticationManager
 from src.cube import SimulateCube, SimulateCubeConfig
+from src.target_device import ITargetDevice
 
 
 class _FakeConfig:
@@ -30,6 +31,8 @@ class _FakeDeviceMonitor:
         self._simulated_cubes = {}
         self._simulated_cube_counter = 0
         self.target_devices = []
+        self._connected_index = {}
+        self._target_device_cache = {}
 
     def refresh_all_cube(self):
         self.refresh_all_cube_calls += 1
@@ -47,13 +50,21 @@ class _FakeDeviceMonitor:
         return []
 
     def get_device_by_serial(self, serial: str):
-        return None
+        return self._connected_index.get(str(serial))
 
     def get_authenticator_by_serial(self, serial: str):
         return self.authenticators.get(serial)
 
     def is_simulated_cube(self, serial: str) -> bool:
         return str(serial or "") in self._simulated_cubes
+
+    def get_target_device(self, serial: str, create_if_missing: bool = False):
+        key = str(serial)
+        if key not in self._target_device_cache:
+            self._target_device_cache[key] = ITargetDevice.CreateSimulation(
+                status="Unauthorized", serial_number=key
+            )
+        return self._target_device_cache[key]
 
     def get_simulated_cube_infos(self):
         return {s: c.to_authenticator_info() for s, c in self._simulated_cubes.items()}
