@@ -1,0 +1,5 @@
+# Requirements for Windows 7 SP1 compatibility builds.
+# Build this target with Python 3.7.x in an isolated environment.
+pyinstaller==5.13.2
+importlib-metadata<8
+cryptography==42.0.8

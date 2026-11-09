@@ -11,3 +11,16 @@ ENABLE_SIMULATED_DEVICE = os.environ.get("CBSS_ENABLE_SIMULATED_DEVICE", "0") ==
 # 模拟设备常量
 SIMULATED_DEVICE_STATUS_OPTIONS = ("Pirated", "Authorized", "Unauthorized", "AuthorizationFailure")
 SIMULATED_AUTHENTICATOR_SERIAL = "SIMULATED_AUTHENTICATOR"
+
+SUPPORTED_COMPACT_MODES = ("modern", "win7")
+
+
+def normalize_compact_mode(mode: str) -> str:
+	normalized = str(mode or "modern").strip().lower()
+	if normalized not in SUPPORTED_COMPACT_MODES:
+		return "modern"
+	return normalized
+
+
+# choose between win7, modern
+CBSS_CUBE_COMPACT_MODE = normalize_compact_mode(os.environ.get("CBSS_CUBE_COMPACT_MODE", "modern"))

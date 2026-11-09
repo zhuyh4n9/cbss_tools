@@ -34,6 +34,8 @@ class _FakeDeviceMonitor:
         self.target_devices = []
         self._connected_index = {}
         self._target_device_cache = {}
+        self.status_updates = []
+        self.display_status_updates = []
 
     def refresh_all_cube(self):
         self.refresh_all_cube_calls += 1
@@ -47,6 +49,27 @@ class _FakeDeviceMonitor:
 
     def get_authenticator_by_serial(self, serial: str):
         return self.authenticators.get(serial)
+
+    def update_device_status(self, serial: str, new_status: str):
+        serial = str(serial)
+        new_status = str(new_status or "")
+        self.status_updates.append((serial, new_status))
+        target = self._target_device_cache.get(serial)
+        if target is not None and hasattr(target, "setStatus"):
+            target.setStatus(new_status)
+        for device in self.target_devices:
+            if device.serial == serial:
+                device.status = new_status
+                break
+
+    def update_device_display_status(self, serial: str, new_status: str):
+        serial = str(serial)
+        new_status = str(new_status or "")
+        self.display_status_updates.append((serial, new_status))
+        for device in self.target_devices:
+            if device.serial == serial:
+                device.status = new_status
+                break
 
     def is_simulated_cube(self, serial: str) -> bool:
         return False
@@ -193,10 +216,14 @@ class TestAuthenticationManagerAutoRefresh(unittest.TestCase):
         fake_adb_manager = _FakeAdbManager(events=events)
         manager = AuthenticationManager(adb_manager=fake_adb_manager, device_monitor=fake_monitor)
 
+        fake_monitor.target_devices = [DeviceInfo(serial="DEV-001", status="Unauthorized", uuid="UUID-001")]
+
         result = manager._perform_authentication("DEV-001", "CUBE-001")
 
         self.assertTrue(result["success"])
         self.assertEqual(fake_monitor.refresh_all_cube_calls, 1)
+        self.assertIn(("DEV-001", "activate_in_progress"), fake_monitor.display_status_updates)
+        self.assertIn(("DEV-001", "Authorized"), fake_monitor.status_updates)
         self.assertIn("authenticator_sign", events)
         self.assertIn("refresh_all_cube", events)
         self.assertEqual(events.count("authenticator_sign"), 1)

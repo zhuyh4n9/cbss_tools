@@ -1,5 +1,34 @@
 # CBSS工具更新日志
 
+## v3.5.1 (2026-06-30)
+
+### 功能增强
+1. **The Cube 启动单例保护**
+   - Windows 平台启动时增加单例互斥，避免重复打开多个 The Cube 进程
+   - 重复启动时直接给出提示，不再进入第二个 GUI 实例
+
+### 问题修复
+1. **Win7 版本 ADB 运行时路径修复**
+   - 打包后的 Win7 版本运行时改为优先使用 `TheCube.exe` 同级目录资源
+   - 修复 Win7 发布包误查找 `adb_win7/adb.exe` 导致“系统找不到指定的文件”
+2. **Win7 与 modern ADB server 隔离**
+   - Win7 运行时使用独立 ADB server 端口，避免与 modern 版 ADB server 版本冲突
+3. **激活中状态提示增强**
+   - 激活过程中状态栏、进度弹窗和待授权设备列表均可显示“设备正在激活中，请不要移除设备”
+
+## v3.5.0 (2026-06-30)
+
+### 功能增强
+1. **Windows 7 隔离构建目标**
+   - `package_all.py` 新增 `--target-os modern|win7` 参数，默认保持现代 Windows 构建路径
+   - Win7 构建使用独立输出目录（如 `TheCube_Portable_Win7`）和独立 spec（如 `cbss_simple_win7.spec`）
+   - 新增 `requirements-win7.txt`，固定 Win7 兼容构建依赖
+   - Win7 可执行文件构建前强制校验 Python 3.8.x，避免在现代 Python 环境中误产出不兼容包
+   - Win7 spec 默认关闭 UPX 并降低优化级别，减少旧系统运行变量
+   - Win7 构建支持自动查找 `py -3.8`，也可通过 `--python-exe` 指定完整 Python 3.8 解释器
+   - 目标 Python 无法联网安装依赖时，自动使用当前 Python 下载离线 wheel 后安装到目标 Python
+   - 构建前提前检查目标 Python 是否包含 `tkinter`，避免使用缺少 Tcl/Tk 的 pythoncore 环境
+
 ## v3.4.0 (2026-05-15)
 
 ### 功能增强

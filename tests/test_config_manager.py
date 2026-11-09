@@ -107,6 +107,12 @@ class TestConfigManager(unittest.TestCase):
         cm = ConfigManager(self.config_path)
         self.assertEqual(cm.get("DeviceList", "color_pirated"), "#663300")
 
+    def test_migrates_missing_device_list_style_defaults(self):
+        self._write_config("[DeviceList]\nfont_size=14\n")
+        cm = ConfigManager(self.config_path)
+        self.assertFalse(cm.getboolean("DeviceList", "font_bold"))
+        self.assertEqual(cm.get("DeviceList", "color_activate_in_progress"), "#D97706")
+
     def test_default_config_includes_cube_status_info_style(self):
         cm = ConfigManager(os.path.join(self.tmpdir.name, "missing.ini"))
         self.assertEqual(cm.getint("CubeStatusInfo", "font_size"), 10)

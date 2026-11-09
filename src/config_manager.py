@@ -139,6 +139,12 @@ class ConfigManager:
         if not self.config.has_section('DeviceList'):
             return
 
+        if not self.config.has_option('DeviceList', 'font_bold'):
+            self.config.set('DeviceList', 'font_bold', 'false')
+
+        if not self.config.has_option('DeviceList', 'color_activate_in_progress'):
+            self.config.set('DeviceList', 'color_activate_in_progress', '#D97706')
+
         color_pirated = self.get('DeviceList', 'color_pirated', '').strip()
         if color_pirated.lower() == LEGACY_PIRATED_COLOR.lower():
             self.config.set('DeviceList', 'color_pirated', DEFAULT_PIRATED_COLOR)
@@ -149,7 +155,7 @@ class ConfigManager:
         self.config.add_section('General')
         self.config.set('General', 'refresh_rate', '1')
         self.config.set('General', 'adb_path', 'adb/adb.exe')
-        self.config.set('General', 'version', '3.4.0')
+        self.config.set('General', 'version', '3.5.1')
         self.config.set('General', 'auto_activation_enabled', 'false')
 
         # UI配置
@@ -175,6 +181,7 @@ class ConfigManager:
         self.config.set('DeviceList', 'font_bold', 'false')
         self.config.set('DeviceList', 'color_authorized', '#008000')
         self.config.set('DeviceList', 'color_unauthorized', '#000000')
+        self.config.set('DeviceList', 'color_activate_in_progress', '#D97706')
         self.config.set('DeviceList', 'color_authorization_failure', '#FF0000')
         self.config.set('DeviceList', 'color_pirated', DEFAULT_PIRATED_COLOR)
 

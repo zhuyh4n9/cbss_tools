@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 from src.adb_manager import ADBManager, CommandResult
 
@@ -19,44 +20,44 @@ class TestADBManagerParseOutput(unittest.TestCase):
 
     def test_parse_success_output(self):
         output = "[status] 0\n[result] some_data\n"
-        result = self.adb._parse_command_output(output, True)
+        result = self.adb._parse_command_output("SERIAL-001", output, True)
         self.assertTrue(result.success)
         self.assertEqual(result.status_code, 0)
         self.assertEqual(result.result_data, "some_data")
 
     def test_parse_failure_status_code(self):
         output = "[status] -1, error occurred\n"
-        result = self.adb._parse_command_output(output, True)
+        result = self.adb._parse_command_output("SERIAL-001", output, True)
         self.assertFalse(result.success)
         self.assertEqual(result.status_code, -1)
         self.assertEqual(result.error_message, "error occurred")
 
     def test_parse_command_not_found(self):
         output = "some output\ncommand not found\n"
-        result = self.adb._parse_command_output(output, True)
+        result = self.adb._parse_command_output("SERIAL-001", output, True)
         self.assertFalse(result.success)
         self.assertIn("not found", result.error_message)
 
     def test_parse_permission_denied(self):
         output = "Permission denied\n"
-        result = self.adb._parse_command_output(output, True)
+        result = self.adb._parse_command_output("SERIAL-001", output, True)
         self.assertFalse(result.success)
         self.assertIn("Permission denied", result.error_message)
 
     def test_parse_no_status_line(self):
         output = "just some random output\n"
-        result = self.adb._parse_command_output(output, True)
+        result = self.adb._parse_command_output("SERIAL-001", output, True)
         self.assertTrue(result.success)
         self.assertEqual(result.status_code, 0)
 
     def test_parse_no_status_line_command_failed(self):
         output = "just some random output\n"
-        result = self.adb._parse_command_output(output, False)
+        result = self.adb._parse_command_output("SERIAL-001", output, False)
         self.assertFalse(result.success)
 
     def test_parse_multiple_status_lines(self):
         output = "[status] 0\n[status] -1, real error\n[result] data\n"
-        result = self.adb._parse_command_output(output, True)
+        result = self.adb._parse_command_output("SERIAL-001", output, True)
         self.assertFalse(result.success)
         self.assertEqual(result.status_code, -1)
         self.assertEqual(result.error_message, "real error")
@@ -64,30 +65,30 @@ class TestADBManagerParseOutput(unittest.TestCase):
 
     def test_parse_status_without_message(self):
         output = "[status] 5\n[result] payload\n"
-        result = self.adb._parse_command_output(output, True)
+        result = self.adb._parse_command_output("SERIAL-001", output, True)
         self.assertFalse(result.success)
         self.assertEqual(result.status_code, 5)
         self.assertEqual(result.error_message, "Status_5")
 
     def test_parse_result_without_status(self):
         output = "[result] only_result\n"
-        result = self.adb._parse_command_output(output, True)
+        result = self.adb._parse_command_output("SERIAL-001", output, True)
         self.assertTrue(result.success)
         self.assertEqual(result.result_data, "only_result")
 
     def test_parse_empty_output(self):
-        result = self.adb._parse_command_output("", True)
+        result = self.adb._parse_command_output("SERIAL-001", "", True)
         self.assertTrue(result.success)
         self.assertEqual(result.status_code, 0)
 
     def test_parse_not_found_pattern(self):
         output = "sh: some_tool: not found\n"
-        result = self.adb._parse_command_output(output, True)
+        result = self.adb._parse_command_output("SERIAL-001", output, True)
         self.assertFalse(result.success)
 
     def test_parse_no_such_file(self):
         output = "No such file or directory\n"
-        result = self.adb._parse_command_output(output, True)
+        result = self.adb._parse_command_output("SERIAL-001", output, True)
         self.assertFalse(result.success)
 
     def test_command_result_dataclass(self):
@@ -96,6 +97,16 @@ class TestADBManagerParseOutput(unittest.TestCase):
         self.assertEqual(cr.status_code, 0)
         self.assertEqual(cr.result_data, "ok")
         self.assertEqual(cr.raw_output, "raw")
+
+    def test_get_connected_devices_uses_runtime_adb_server_port(self):
+        with mock.patch("src.adb_manager.get_runtime_profile", return_value={"adb_server_port": 5038}):
+            adb = ADBManager(_FakeConfig())
+
+        completed = mock.Mock(stdout="List of devices attached\n", stderr="", returncode=0)
+        with mock.patch("src.adb_manager.subprocess.run", return_value=completed) as mocked_run:
+            adb.get_connected_devices()
+
+        self.assertEqual(mocked_run.call_args.kwargs["env"]["ADB_SERVER_PORT"], "5038")
 
 
 if __name__ == "__main__":

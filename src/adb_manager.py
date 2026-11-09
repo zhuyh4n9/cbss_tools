@@ -12,6 +12,8 @@ from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 from datetime import datetime
 
+from .platform.compact import get_runtime_profile, resolve_adb_path
+
 # Windows平台下隐藏CMD窗口
 if sys.platform == 'win32':
     import subprocess
@@ -60,9 +62,20 @@ class ADBManager:
     def __init__(self, config_manager):
         self.config = config_manager
         self.adb_path = self.config.get('General', 'adb_path', 'adb')
-        # 确保ADB路径是绝对路径
-        if not os.path.isabs(self.adb_path):
-            self.adb_path = os.path.abspath(self.adb_path)
+        self.adb_path = resolve_adb_path(self.adb_path)
+        self.adb_server_port = str(get_runtime_profile().get('adb_server_port', 5037))
+        self._adb_env = os.environ.copy()
+        self._adb_env['ADB_SERVER_PORT'] = self.adb_server_port
+
+    def _run_adb_process(self, command, *, timeout=None):
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=self._adb_env,
+            creationflags=SUBPROCESS_FLAGS if sys.platform == 'win32' else 0
+        )
 
     def execute_adb_command(self, command: str, serial: str = None) -> CommandResult:
         """执行ADB命令"""
@@ -79,12 +92,9 @@ class ADBManager:
             logging.debug(f"执行ADB命令: {' '.join(full_command)}")
 
             # 执行命令（Windows下隐藏CMD窗口）
-            result = subprocess.run(
+            result = self._run_adb_process(
                 full_command,
-                capture_output=True,
-                text=True,
                 timeout=240,  # for diagnostic, this operation may extremely long...
-                creationflags=SUBPROCESS_FLAGS if sys.platform == 'win32' else 0
             )
 
             output = result.stdout + result.stderr
@@ -101,9 +111,8 @@ class ADBManager:
             logging.error(error_msg)
             return CommandResult(False, 1, error_message=error_msg)
 
-    def _parse_command_output(self, serial: str, output: str = None, command_success: bool = None) -> CommandResult:
+    def _parse_command_output(self, serial: str, output: str, command_success: bool) -> CommandResult:
         """解析命令输出"""
-
         status_code = 0
         result_data = ""
         error_message = ""
@@ -159,12 +168,7 @@ class ADBManager:
     def get_connected_devices(self) -> List[DeviceInfo]:
         """获取连接的设备列表"""
         try:
-            result = subprocess.run(
-                [self.adb_path, 'devices', '-l'],
-                capture_output=True,
-                text=True,
-                creationflags=SUBPROCESS_FLAGS if sys.platform == 'win32' else 0
-            )
+            result = self._run_adb_process([self.adb_path, 'devices', '-l'])
 
             devices = []
             for line in result.stdout.split('\n'):
@@ -655,12 +659,9 @@ class ADBManager:
         """列出设备上生成的诊断文件"""
         try:
             # 列出/sdcard/CbssDiagnostic/目录下以prefix开头的文件
-            result = subprocess.run(
+            result = self._run_adb_process(
                 [self.adb_path, '-s', serial, 'shell', 'ls', f'/sdcard/CbssDiagnostic/{prefix}*'],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                creationflags=SUBPROCESS_FLAGS if sys.platform == 'win32' else 0
+                timeout=240,
             )
             if result.returncode == 0:
                 files = []
@@ -682,12 +683,9 @@ class ADBManager:
     def pull_file(self, serial: str, remote_path: str, local_path: str) -> bool:
         """从设备拉取文件到本地"""
         try:
-            result = subprocess.run(
+            result = self._run_adb_process(
                 [self.adb_path, '-s', serial, 'pull', remote_path, local_path],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                creationflags=SUBPROCESS_FLAGS if sys.platform == 'win32' else 0
+                timeout=240,
             )
 
             if result.returncode == 0:
@@ -703,12 +701,9 @@ class ADBManager:
     def remove_file(self, serial: str, remote_path: str) -> bool:
         """删除设备上的文件"""
         try:
-            result = subprocess.run(
+            result = self._run_adb_process(
                 [self.adb_path, '-s', serial, 'shell', 'rm', remote_path],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                creationflags=SUBPROCESS_FLAGS if sys.platform == 'win32' else 0
+                timeout=240,
             )
 
             if result.returncode == 0:

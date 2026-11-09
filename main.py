@@ -5,25 +5,37 @@
 import sys
 import os
 import logging
-import tkinter as tk
-from tkinter import messagebox
+
+from src.platform.compact import (
+    acquire_single_instance,
+    format_tkinter_import_error,
+    get_compatibility_error_title,
+    get_runtime_compatibility_error,
+    release_single_instance,
+    show_startup_error,
+)
 
 # 添加src目录到Python路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-try:
-    from src.main_gui import AuthenticatorToolGUI
-except ImportError as e:
-    print(f"导入模块失败: {e}")
-    sys.exit(1)
-
 
 def main():
     """主函数"""
+    single_instance_handle = None
     try:
+        single_instance_handle = acquire_single_instance()
+        if sys.platform == 'win32' and single_instance_handle is None:
+            show_startup_error("提示", "The Cube 已在运行，请勿重复启动")
+            sys.exit(1)
+
         # 检查Python版本
         if sys.version_info < (3, 6):
-            messagebox.showerror("错误", "此程序需要Python 3.6或更高版本")
+            show_startup_error("错误", "此程序需要Python 3.6或更高版本")
+            sys.exit(1)
+
+        compat_error = get_runtime_compatibility_error(project_root=os.getcwd())
+        if compat_error:
+            show_startup_error(get_compatibility_error_title(), compat_error)
             sys.exit(1)
 
         # 创建必要的目录
@@ -35,6 +47,25 @@ def main():
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
         )
+
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+        except ImportError as exc:
+            message = str(exc)
+            if '_tkinter' in message or 'tkinter' in message:
+                message = format_tkinter_import_error(exc)
+            show_startup_error('启动错误', message)
+            sys.exit(1)
+
+        try:
+            from src.main_gui import AuthenticatorToolGUI
+        except ImportError as exc:
+            message = f'导入模块失败: {exc}'
+            if '_tkinter' in str(exc) or 'tkinter' in str(exc):
+                message = format_tkinter_import_error(exc)
+            show_startup_error('启动错误', message)
+            sys.exit(1)
 
         # 启动GUI应用
         app = AuthenticatorToolGUI()
@@ -53,10 +84,12 @@ def main():
             root = tk.Tk()
             root.withdraw()  # 隐藏主窗口
             messagebox.showerror("启动错误", error_msg)
-        except:
-            pass
+        except Exception:
+            show_startup_error("启动错误", error_msg)
 
         sys.exit(1)
+    finally:
+        release_single_instance(single_instance_handle)
 
 
 if __name__ == "__main__":

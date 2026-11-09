@@ -320,6 +320,22 @@ class DeviceMonitor:
             if device.serial == serial:
                 device.status = str(new_status or "")
                 break
+        connected_device = self._connected_index.get(str(serial))
+        if connected_device is not None:
+            connected_device.status = str(new_status or "")
+        self._notify_callbacks('device_update', self.target_devices)
+
+    def update_device_display_status(self, serial: str, new_status: str):
+        """仅更新设备列表显示状态，不修改底层TargetDevice协议状态。"""
+        normalized_serial = str(serial)
+        normalized_status = str(new_status or "")
+        for device in self.target_devices:
+            if device.serial == normalized_serial:
+                device.status = normalized_status
+                break
+        connected_device = self._connected_index.get(normalized_serial)
+        if connected_device is not None:
+            connected_device.status = normalized_status
         self._notify_callbacks('device_update', self.target_devices)
 
     def refresh_all_device(self):

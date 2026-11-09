@@ -86,6 +86,7 @@ DEVICE_LIST_STYLE = 'DeviceList.Treeview'
 DEVICE_LIST_STATUS_TAGS = {
     'authorized': 'authorized',
     'unauthorized': 'unauthorized',
+    'activate_in_progress': 'activate_in_progress',
     'authorizationfailure': 'authorization_failure',
     'pirated': 'pirated',
 }
@@ -1110,11 +1111,13 @@ class AuthenticatorToolGUI:
 
         color_authorized = self.config_manager.get('DeviceList', 'color_authorized', '#008000')
         color_unauthorized = self.config_manager.get('DeviceList', 'color_unauthorized', '#000000')
+        color_activate_in_progress = self.config_manager.get('DeviceList', 'color_activate_in_progress', '#D97706')
         color_auth_failure = self.config_manager.get('DeviceList', 'color_authorization_failure', '#FF0000')
         color_pirated = self.config_manager.get('DeviceList', 'color_pirated', '#8B4513')
 
         self.device_tree.tag_configure('authorized', foreground=color_authorized, font=item_font)
         self.device_tree.tag_configure('unauthorized', foreground=color_unauthorized, font=item_font)
+        self.device_tree.tag_configure('activate_in_progress', foreground=color_activate_in_progress, font=item_font)
         self.device_tree.tag_configure('authorization_failure', foreground=color_auth_failure, font=item_font)
         self.device_tree.tag_configure('pirated', foreground=color_pirated, font=item_font)
 
@@ -2111,13 +2114,20 @@ class AuthenticatorToolGUI:
         self.is_operation_in_progress = True
 
         dialog = ProgressDialog(self.root, self.prompt_mgr.get('Text.single_activation_title'), self.prompt_mgr.get('Text.activation_preparing'))
+        self.status_var.set(self.prompt_mgr.get('Text.activation_preparing'))
+
+        def update_progress(message: str):
+            display_message = self._normalize_activation_progress_message(message)
+            self._dispatch_ui_task(dialog.update_progress, display_message)
+            self._dispatch_ui_task(self.status_var.set, display_message)
+            self._dispatch_ui_task(self._refresh_device_table_for_activation_state)
 
         def auth_thread():
             try:
                 result = self.auth_manager.authenticate_device(
                     device_serial,
                     authenticator_serial,
-                    lambda msg: dialog.update_progress(msg)
+                    update_progress
                 )
 
                 self.root.after(0, lambda: self.on_authentication_complete(result, dialog, device_serial))
@@ -2147,12 +2157,19 @@ class AuthenticatorToolGUI:
         self.is_operation_in_progress = True
 
         dialog = ProgressDialog(self.root, self.prompt_mgr.get('Text.batch_activation_title'), self.prompt_mgr.get('Text.batch_activation_preparing'))
+        self.status_var.set(self.prompt_mgr.get('Text.batch_activation_preparing'))
+
+        def update_progress(message: str):
+            display_message = self._normalize_activation_progress_message(message)
+            self._dispatch_ui_task(dialog.update_progress, display_message)
+            self._dispatch_ui_task(self.status_var.set, display_message)
+            self._dispatch_ui_task(self._refresh_device_table_for_activation_state)
 
         def auth_thread():
             try:
                 result = self.auth_manager.authenticate_all_devices(
                     authenticator_serial,
-                    lambda msg: dialog.update_progress(msg)
+                    update_progress
                 )
 
                 self.root.after(0, lambda: self.on_batch_authentication_complete(result, dialog))
@@ -2188,6 +2205,7 @@ class AuthenticatorToolGUI:
         )
 
         # 激活完成后：立即更新UI状态 + markDirty刷新
+        self._refresh_device_table_for_activation_state()
         if device_serial:
             if result.get('success'):
                 self.device_monitor.update_device_status(device_serial, "Authorized")
@@ -2207,6 +2225,7 @@ class AuthenticatorToolGUI:
             messagebox.showerror(self.prompt_mgr.get('Common.fail_title'), result['message'])
 
         # 批量激活完成后：立即更新UI状态 + markDirty刷新
+        self._refresh_device_table_for_activation_state()
         for item in result.get('results', []):
             if item.get('success'):
                 self.device_monitor.update_device_status(item['device_serial'], "Authorized")
@@ -2221,11 +2240,24 @@ class AuthenticatorToolGUI:
         messagebox.showerror(self.prompt_mgr.get('Common.error_title'), self.prompt_mgr.format('Errors.unknown_error', msg=error_message))
 
         # 异常结束同样触发刷新
+        self._refresh_device_table_for_activation_state()
         if device_serial:
             self.device_monitor.mark_device_dirty(device_serial)
             self.device_monitor.refresh_all_cube()
         else:
             self.device_monitor.mark_all_devices_dirty()
+
+    def _refresh_device_table_for_activation_state(self):
+        devices = list(getattr(self.device_monitor, 'target_devices', []) or [])
+        self.update_device_display(devices)
+
+    def _normalize_activation_progress_message(self, message: str) -> str:
+        normalized_message = str(message or '').strip()
+        if normalized_message == "正在激活设备...":
+            return self.prompt_mgr.get('Text.activation_in_progress_keep_device')
+        if normalized_message.startswith("正在激活设备 "):
+            return f"{normalized_message}，请不要移除设备"
+        return normalized_message
 
     # 诊断日志功能方法 (NEW in Update 2)
     def get_token_diagnostic(self):

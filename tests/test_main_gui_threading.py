@@ -74,6 +74,9 @@ class _FakeAuthManager:
     def is_auto_activation_enabled(self):
         return False
 
+    def is_device_activation_in_progress(self, _serial):
+        return False
+
     def is_device_auto_activation_completed(self, _serial):
         return False
 
@@ -86,6 +89,8 @@ class _FakePromptManager:
         "DeviceTable.uuid_fetching": "UUID加载中",
         "DeviceTable.uuid_unavailable": "UUID不可用",
         "DeviceStatus.Checking": "检测中",
+        "DeviceStatus.activate_in_progress": "设备正在激活中，请不要移除设备",
+        "Text.activation_in_progress_keep_device": "激活中，请不要移除设备",
     }
 
     def get(self, key, default=None, fallback=None):
@@ -227,6 +232,22 @@ class TestMainGuiThreading(unittest.TestCase):
 
         self.assertEqual(captured_rows[0][0][1], "UUID不可用")
         self.assertEqual(captured_rows[0][1][1], "UUID加载中")
+
+    def test_update_device_display_overrides_status_for_activation_in_progress(self):
+        gui = self._make_gui()
+        captured_rows = []
+        gui._apply_device_rows = lambda rows: captured_rows.append(rows)
+        device = self.main_gui.DeviceInfo(
+            serial="SIM-ACTIVE",
+            status="activate_in_progress",
+            device_type="target_device",
+            uuid="uuid-active",
+            usb_port="SIM",
+        )
+
+        gui.update_device_display([device])
+
+        self.assertEqual(captured_rows[0][0][self._STATUS_COLUMN], "设备正在激活中，请不要移除设备")
 
     def test_is_uuid_ready_uses_configured_prompt_placeholders(self):
         gui = self._make_gui()

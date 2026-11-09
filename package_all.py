@@ -16,29 +16,83 @@ import importlib.util
 from pathlib import Path
 from datetime import datetime
 
+BUILD_TARGETS = {
+    'modern': {
+        'display_name': 'Windows 10/11',
+        'compact_mode': 'modern',
+        'package_suffix': '',
+        'spec_suffix': '',
+        'requirements_file': 'requirements.txt',
+        'python_exact': None,
+        'python_min': (3, 7),
+        'python_label': 'Python 3.7+',
+        'build_dependencies': {
+            'PyInstaller': 'pyinstaller>=4.0',
+            'cryptography': 'cryptography',
+        },
+        'upx': True,
+        'optimize_level': 2,
+        'adb_source_dir': 'adb',
+        'pip_user_install': False,
+        'runtime_hook_name': None,
+    },
+    'win7': {
+        'display_name': 'Windows 7 SP1 (64位兼容构建)',
+        'compact_mode': 'win7',
+        'package_suffix': '_Win7',
+        'spec_suffix': '_win7',
+        'requirements_file': 'requirements-win7.txt',
+        'python_exact': (3, 7),
+        'python_min': (3, 7),
+        'python_label': 'Python 3.7.x',
+        'build_dependencies': {
+            'importlib_metadata': 'importlib-metadata<8',
+            'PyInstaller': 'pyinstaller==5.13.2',
+            'cryptography': 'cryptography==42.0.8',
+        },
+        'upx': False,
+        'optimize_level': 1,
+        'adb_source_dir': 'adb_win7',
+        'pip_user_install': True,
+        'runtime_hook_name': 'pyi_rth_win7_dll_compat.py',
+    },
+}
+
+
 class CBSSPackager:
     """CBSS工具打包器"""
 
-    def __init__(self):
+    def __init__(self, target_os='modern', python_exe=None):
         self.project_root = Path.cwd()
-        self.version = "3.4.0"
+        self.version = "3.5.1"
         self.build_date = datetime.now().strftime("%Y-%m-%d")
+        self.target_os = str(target_os or 'modern').lower()
+        if self.target_os not in BUILD_TARGETS:
+            raise ValueError(f"Unsupported target_os: {target_os}")
+        self.target_profile = BUILD_TARGETS[self.target_os]
+        self.requirements_file = self.target_profile['requirements_file']
+        self.python_exe = str(python_exe or "").strip()
+        self._target_python_cmd = None
+        self._target_python_version = None
+        self._analysis_supports_optimize = None
+        self._runtime_hook_paths = None
+        package_suffix = self.target_profile['package_suffix']
 
         # 打包目录
         self.build_dirs = {
-            'dev': 'package/TheCube_Dev',
-            'lite': 'package/TheCube_Lite',
-            'portable': 'package/TheCube_Portable',
-            'installer': 'package/TheCube_Installer',
-            'release': 'package/TheCube_Release',
-            'quick': 'package/TheCube_Quick'
+            'dev': f'package/TheCube_Dev{package_suffix}',
+            'lite': f'package/TheCube_Lite{package_suffix}',
+            'portable': f'package/TheCube_Portable{package_suffix}',
+            'installer': f'package/TheCube_Installer{package_suffix}',
+            'release': f'package/TheCube_Release{package_suffix}',
+            'quick': f'package/TheCube_Quick{package_suffix}'
         }
 
         # 核心文件列表
         self.core_files = [
             'main.py',
             'README.md',
-            'requirements.txt',
+            self.requirements_file,
             'changelog/CHANGELOG.md'
         ]
 
@@ -64,13 +118,117 @@ class CBSSPackager:
             encoding = sys.stdout.encoding or "utf-8"
             print(line.encode(encoding, errors="replace").decode(encoding, errors="replace"))
 
-    def check_environment(self):
+    def _candidate_python_commands(self):
+        if self.python_exe:
+            return [[self.python_exe]]
+
+        exact = self.target_profile.get('python_exact')
+        if exact:
+            major, minor = exact
+            return [
+                ['py', f'-{major}.{minor}'],
+                [f'python{major}.{minor}'],
+                [f'python{major}{minor}'],
+                [sys.executable],
+            ]
+        return [[sys.executable]]
+
+    @staticmethod
+    def _cmd_display(cmd):
+        return " ".join(str(part) for part in cmd)
+
+    @staticmethod
+    def _is_current_python_cmd(cmd):
+        return len(cmd) == 1 and Path(cmd[0]).resolve() == Path(sys.executable).resolve()
+
+    def _probe_python_version(self, cmd):
+        probe = (
+            "import sys; "
+            "print('{}.{}.{}'.format(sys.version_info[0], sys.version_info[1], sys.version_info[2]))"
+        )
+        try:
+            result = subprocess.run(
+                cmd + ['-c', probe],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except Exception:
+            return None
+        if result.returncode != 0:
+            return None
+        version_text = (result.stdout or "").strip().splitlines()
+        if not version_text:
+            return None
+        try:
+            return tuple(int(part) for part in version_text[-1].split('.')[:3])
+        except ValueError:
+            return None
+
+    def _resolve_target_python(self):
+        if self._target_python_cmd is not None:
+            return True
+
+        exact = self.target_profile.get('python_exact')
+        min_version = self.target_profile.get('python_min')
+        tried = []
+        for cmd in self._candidate_python_commands():
+            tried.append(self._cmd_display(cmd))
+            version = self._probe_python_version(cmd)
+            if not version:
+                continue
+            if exact and version[:2] != exact:
+                continue
+            if min_version and version[:2] < min_version:
+                continue
+            self._target_python_cmd = cmd
+            self._target_python_version = version
+            return True
+
+        requirement = self.target_profile['python_label']
+        self.log(
+            f"错误：未找到满足 {self.target_os} 构建目标的 {requirement}，已尝试: {', '.join(tried)}",
+            "ERROR",
+        )
+        return False
+
+    def _get_target_python_cmd(self):
+        if not self._resolve_target_python():
+            return None
+        return list(self._target_python_cmd)
+
+    def _get_target_python_version_text(self):
+        if self._target_python_version:
+            return ".".join(str(part) for part in self._target_python_version)
+        if self._resolve_target_python() and self._target_python_version:
+            return ".".join(str(part) for part in self._target_python_version)
+        return f"{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}"
+
+    def _check_target_python(self):
+        if not self._resolve_target_python():
+            return False
+        self.log(
+            f"使用目标Python: {self._cmd_display(self._target_python_cmd)} "
+            f"({self._get_target_python_version_text()})"
+        )
+        return True
+
+    def check_environment(self, require_build=False):
         """检查构建环境"""
-        self.log("检查构建环境...")
+        self.log(f"检查构建环境... target-os={self.target_os}")
 
         # 检查Python版本
         if sys.version_info < (3, 7):
             self.log("错误：需要Python 3.7或更高版本", "ERROR")
+            return False
+        if require_build and not self._check_target_python():
+            return False
+        if require_build and not self._tkinter_exists_in_target_python():
+            self.log(
+                f"错误：目标Python缺少tkinter。请安装包含 Tcl/Tk 的完整 {self.target_profile['python_label']}，"
+                f"或通过 --python-exe 指定完整 {self.target_profile['python_label']} 解释器路径。",
+                "ERROR",
+            )
             return False
 
         # 检查必要文件
@@ -81,7 +239,7 @@ class CBSSPackager:
 
         # 检查必要目录
         for dir_name in self.core_dirs:
-            if not (self.project_root / dir_name).exists():
+            if not self._get_source_dir_path(dir_name).exists():
                 self.log(f"错误：缺少核心目录 {dir_name}", "ERROR")
                 return False
 
@@ -92,43 +250,282 @@ class CBSSPackager:
         """安装打包依赖"""
         self.log("检查并安装依赖...")
 
-        dependencies = ['pyinstaller>=4.0']
+        dependencies = list(self.target_profile['build_dependencies'].values())
 
         for dep in dependencies:
-            try:
-                self.log(f"安装 {dep}...")
-                subprocess.run([
-                    sys.executable, "-m", "pip", "install", dep
-                ], check=True, capture_output=True)
+            self.log(f"安装 {dep}...")
+            if self._install_dependency(dep):
                 self.log(f"✓ {dep} 安装成功")
-            except subprocess.CalledProcessError as e:
-                self.log(f"✗ {dep} 安装失败: {e}", "ERROR")
-                return False
+                continue
+            self.log(f"✗ {dep} 安装失败", "ERROR")
+            return False
 
         return True
 
+    def _module_exists_in_target_python(self, module_name):
+        python_cmd = self._get_target_python_cmd()
+        if not python_cmd:
+            return False
+        if self._is_current_python_cmd(python_cmd):
+            return importlib.util.find_spec(module_name) is not None
+
+        script = (
+            "import importlib.util, sys; "
+            f"sys.exit(0 if importlib.util.find_spec({module_name!r}) is not None else 1)"
+        )
+        result = subprocess.run(
+            python_cmd + ['-c', script],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
+
+    def _tkinter_exists_in_target_python(self):
+        python_cmd = self._get_target_python_cmd()
+        if not python_cmd:
+            return False
+        if self._is_current_python_cmd(python_cmd):
+            try:
+                import tkinter  # noqa: F401
+                return True
+            except Exception:
+                return False
+        result = subprocess.run(
+            python_cmd + ['-c', 'import tkinter'],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
+
+    def _target_pip_install(self, install_args):
+        python_cmd = self._get_target_python_cmd()
+        if not python_cmd:
+            return None
+        return subprocess.run(
+            python_cmd + ["-m", "pip", "install"] + list(install_args),
+            capture_output=True,
+            text=True,
+        )
+
+    def _get_source_dir_name(self, dir_name):
+        if dir_name == 'adb':
+            adb_source_dir = self.target_profile.get('adb_source_dir', 'adb')
+            adb_source_path = self.project_root / adb_source_dir
+            if adb_source_path.exists():
+                return adb_source_dir
+        return dir_name
+
+    def _get_source_dir_path(self, dir_name):
+        return self.project_root / self._get_source_dir_name(dir_name)
+
+    def _copy_package_dir(self, package_root, dir_name):
+        src_dir = self._get_source_dir_path(dir_name)
+        if not src_dir.exists():
+            return False
+
+        dst_dir = package_root / dir_name
+        if dst_dir.exists():
+            shutil.rmtree(dst_dir)
+        shutil.copytree(src_dir, dst_dir)
+        return True
+
+    def _pyinstaller_analysis_supports_optimize(self):
+        if self._analysis_supports_optimize is not None:
+            return self._analysis_supports_optimize
+
+        python_cmd = self._get_target_python_cmd()
+        if not python_cmd:
+            self._analysis_supports_optimize = False
+            return False
+
+        probe = (
+            "import inspect, sys; "
+            "from PyInstaller.building.build_main import Analysis; "
+            "sys.exit(0 if 'optimize' in inspect.signature(Analysis.__init__).parameters else 1)"
+        )
+        result = subprocess.run(
+            python_cmd + ['-c', probe],
+            capture_output=True,
+            text=True,
+        )
+        self._analysis_supports_optimize = (result.returncode == 0)
+        return self._analysis_supports_optimize
+
+    def _ensure_runtime_hooks(self):
+        if self._runtime_hook_paths is not None:
+            return list(self._runtime_hook_paths)
+
+        hook_dir = self.project_root / 'build' / 'runtime_hooks'
+        hook_dir.mkdir(parents=True, exist_ok=True)
+
+        runtime_hooks = []
+        mode_hook_path = hook_dir / 'pyi_rth_compact_mode.py'
+        mode_hook_content = (
+            'import os\n'
+            f'os.environ.setdefault("CBSS_CUBE_COMPACT_MODE", "{self.target_profile["compact_mode"]}")\n'
+        )
+        with open(mode_hook_path, 'w', encoding='utf-8') as hook_file:
+            hook_file.write(mode_hook_content)
+        runtime_hooks.append(str(mode_hook_path))
+
+        runtime_hook_name = self.target_profile.get('runtime_hook_name')
+        if runtime_hook_name:
+            hook_path = hook_dir / runtime_hook_name
+            hook_content = '''import os
+import sys
+
+
+class _CompatDllDirectoryHandle:
+    def __init__(self, path):
+        self.path = path
+
+    def close(self):
+        return None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False
+
+
+def _is_win7():
+    if sys.platform != 'win32':
+        return False
+    version = sys.getwindowsversion()
+    return (version.major, version.minor) <= (6, 1)
+
+
+def _prepend_path(path):
+    current = os.environ.get('PATH', '')
+    parts = [item for item in current.split(os.pathsep) if item]
+    if path not in parts:
+        os.environ['PATH'] = path + (os.pathsep + current if current else '')
+def _patch_add_dll_directory():
+    original = getattr(os, 'add_dll_directory', None)
+    if original is None or not _is_win7():
+        return
+
+    def _safe_add_dll_directory(path):
+        normalized = os.fspath(path)
+        try:
+            return original(normalized)
+        except OSError as exc:
+            if getattr(exc, 'winerror', None) != 87:
+                raise
+            if normalized and os.path.isdir(normalized):
+                _prepend_path(normalized)
+            return _CompatDllDirectoryHandle(normalized)
+
+    os.add_dll_directory = _safe_add_dll_directory
+
+
+_patch_add_dll_directory()
+
+for extra_dir in (getattr(sys, '_MEIPASS', ''), os.path.join(getattr(sys, '_MEIPASS', ''), 'tcl'), os.path.join(getattr(sys, '_MEIPASS', ''), 'tk')):
+    if extra_dir and os.path.isdir(extra_dir):
+        _prepend_path(extra_dir)
+'''
+            with open(hook_path, 'w', encoding='utf-8') as hook_file:
+                hook_file.write(hook_content)
+            runtime_hooks.append(str(hook_path))
+
+        self._runtime_hook_paths = runtime_hooks
+        return list(self._runtime_hook_paths)
+
+    def _download_target_wheelhouse(self, dependency):
+        wheelhouse = self.project_root / "build" / f"wheelhouse_{self.target_os}"
+        wheelhouse.mkdir(parents=True, exist_ok=True)
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "pip",
+            "download",
+            "--dest",
+            str(wheelhouse),
+            "--only-binary=:all:",
+        ]
+        exact = self.target_profile.get('python_exact')
+        if exact:
+            major, minor = exact
+            cmd.extend([
+                "--python-version",
+                f"{major}{minor}",
+                "--platform",
+                "win_amd64",
+                "--implementation",
+                "cp",
+                "--abi",
+                f"cp{major}{minor}",
+            ])
+        cmd.append(dependency)
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            self.log(f"✗ 下载离线依赖失败: {dependency}\n{result.stderr or result.stdout}", "ERROR")
+            return None
+        return wheelhouse
+
+    def _install_dependency(self, dependency):
+        install_args = [dependency]
+        if self.target_profile.get('pip_user_install', False):
+            install_args.insert(0, "--user")
+
+        result = self._target_pip_install(install_args)
+        if result and result.returncode == 0:
+            return True
+
+        self.log(
+            f"直接安装 {dependency} 失败，尝试下载离线wheel后安装...",
+            "WARN",
+        )
+        if result:
+            self.log(result.stderr or result.stdout, "WARN")
+
+        wheelhouse = self._download_target_wheelhouse(dependency)
+        if wheelhouse is None:
+            return False
+
+        offline_args = []
+        if self.target_profile.get('pip_user_install', False):
+            offline_args.append("--user")
+        offline_args.extend([
+            "--no-index",
+            "--find-links",
+            str(wheelhouse),
+            dependency,
+        ])
+        offline_result = self._target_pip_install(offline_args)
+        if offline_result and offline_result.returncode == 0:
+            return True
+
+        error_text = ""
+        if offline_result:
+            error_text = offline_result.stderr or offline_result.stdout
+        self.log(f"✗ 离线安装依赖失败: {dependency}\n{error_text}", "ERROR")
+        return False
+
     def check_build_dependencies(self):
         """检查构建与运行时关键依赖"""
-        self.log("检查编译依赖...")
+        self.log(f"检查编译依赖... target-os={self.target_os}")
+        if not self._check_target_python():
+            return False
 
-        required_modules = {
-            'PyInstaller': 'pip install pyinstaller',
-            'cryptography': 'pip install cryptography',
-        }
+        required_modules = self.target_profile['build_dependencies']
         missing_modules = []
 
         for module_name, install_hint in required_modules.items():
-            if importlib.util.find_spec(module_name) is None:
+            if not self._module_exists_in_target_python(module_name):
                 missing_modules.append((module_name, install_hint))
 
         if missing_modules:
             for module_name, install_hint in missing_modules:
-                self.log(f"✗ 缺少依赖模块: {module_name} ({install_hint})", "ERROR")
+                self.log(f"✗ 缺少依赖模块: {module_name} (pip install {install_hint})", "ERROR")
             return False
 
-        try:
-            import tkinter  # noqa: F401
-        except Exception:
+        if not self._tkinter_exists_in_target_python():
             self.log("✗ 缺少依赖模块: tkinter (请安装包含tkinter的Python发行版)", "ERROR")
             return False
 
@@ -177,11 +574,19 @@ class CBSSPackager:
             self.log(f"删除压缩包: {rar_file.name}")
             rar_file.unlink()
 
-    def create_pyinstaller_spec(self, simple=False, optimize_level=2):
+    def create_pyinstaller_spec(self, simple=False, optimize_level=None):
         """创建PyInstaller配置文件"""
-        self.log("创建PyInstaller配置文件...")
+        self.log(f"创建PyInstaller配置文件... target-os={self.target_os}")
 
-        spec_name = "cbss_simple.spec" if simple else "TheCube.spec"
+        spec_suffix = self.target_profile['spec_suffix']
+        spec_name = f"cbss_simple{spec_suffix}.spec" if simple else f"TheCube{spec_suffix}.spec"
+        if optimize_level is None:
+            optimize_level = self.target_profile['optimize_level']
+        upx_enabled = str(bool(self.target_profile['upx']))
+        optimize_arg = ""
+        if self._pyinstaller_analysis_supports_optimize():
+            optimize_arg = f"    optimize={optimize_level},\n"
+        runtime_hooks = self._ensure_runtime_hooks()
 
         # 基础配置
         binaries = []
@@ -194,10 +599,11 @@ class CBSSPackager:
 
         # 完整版本包含更多文件
         if not simple:
+            adb_dir = self._get_source_dir_name('adb')
             binaries.extend([
-                ('adb/adb.exe', 'adb'),
-                ('adb/AdbWinApi.dll', 'adb'),
-                ('adb/AdbWinUsbApi.dll', 'adb'),
+                (f'{adb_dir}/adb.exe', 'adb'),
+                (f'{adb_dir}/AdbWinApi.dll', 'adb'),
+                (f'{adb_dir}/AdbWinUsbApi.dll', 'adb'),
             ])
             datas.extend([
                 ('stress_test/pubkey/pub.pem', 'stress_test/pubkey'),
@@ -227,11 +633,11 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={{}},
-    runtime_hooks=[],
+    runtime_hooks={runtime_hooks},
     excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
-    optimize={optimize_level},
+{optimize_arg}    
     cipher=block_cipher,
     noarchive=False,
 )
@@ -249,7 +655,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx={upx_enabled},
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
@@ -268,9 +674,9 @@ exe = EXE(
         self.log(f"✓ {spec_name} 创建成功")
         return spec_name
 
-    def build_executable(self, simple=True, optimize_level=2):
+    def build_executable(self, simple=True, optimize_level=None):
         """构建可执行文件"""
-        self.log("构建可执行文件...")
+        self.log(f"构建可执行文件... target-os={self.target_os}")
 
         if not self.check_build_dependencies():
             self.log("✗ 构建失败：编译依赖检查未通过", "ERROR")
@@ -280,7 +686,7 @@ exe = EXE(
 
         try:
             cmd = [
-                sys.executable,
+                *self._get_target_python_cmd(),
                 "-m",
                 "PyInstaller",
                 spec_file,
@@ -336,12 +742,7 @@ exe = EXE(
         # 复制目录
         all_dirs = self.core_dirs + self.optional_dirs
         for dir_name in all_dirs:
-            src_dir = self.project_root / dir_name
-            if src_dir.exists():
-                dst_dir = dev_dir / dir_name
-                if dst_dir.exists():
-                    shutil.rmtree(dst_dir)
-                shutil.copytree(src_dir, dst_dir)
+            self._copy_package_dir(dev_dir, dir_name)
 
         # 创建开发环境脚本
         self._create_dev_scripts(dev_dir)
@@ -360,7 +761,7 @@ exe = EXE(
         lite_dir.mkdir(parents=True, exist_ok=True)
 
         # 复制核心文件
-        core_files = ['main.py', 'requirements.txt']
+        core_files = ['main.py', self.requirements_file]
         for file_name in core_files:
             src = self.project_root / file_name
             if src.exists():
@@ -368,12 +769,7 @@ exe = EXE(
 
         # 复制核心目录
         for dir_name in self.core_dirs:
-            src_dir = self.project_root / dir_name
-            if src_dir.exists():
-                dst_dir = lite_dir / dir_name
-                if dst_dir.exists():
-                    shutil.rmtree(dst_dir)
-                shutil.copytree(src_dir, dst_dir)
+            self._copy_package_dir(lite_dir, dir_name)
 
         # 创建启动脚本
         self._create_simple_launcher(lite_dir)
@@ -411,12 +807,7 @@ exe = EXE(
         # 复制目录
         dirs_to_copy = ['adb', 'config']
         for dir_name in dirs_to_copy:
-            src_dir = self.project_root / dir_name
-            if src_dir.exists():
-                dst_dir = portable_dir / dir_name
-                if dst_dir.exists():
-                    shutil.rmtree(dst_dir)
-                shutil.copytree(src_dir, dst_dir)
+            self._copy_package_dir(portable_dir, dir_name)
 
         # 创建便携版脚本和文档
         self._create_portable_scripts(portable_dir)
@@ -453,12 +844,7 @@ exe = EXE(
 
         all_dirs = self.core_dirs + self.optional_dirs
         for dir_name in all_dirs:
-            src_dir = self.project_root / dir_name
-            if src_dir.exists():
-                dst_dir = installer_dir / dir_name
-                if dst_dir.exists():
-                    shutil.rmtree(dst_dir)
-                shutil.copytree(src_dir, dst_dir)
+            self._copy_package_dir(installer_dir, dir_name)
 
         # 创建安装脚本
         self._create_installer_scripts(installer_dir)
@@ -495,12 +881,7 @@ exe = EXE(
         # 复制必要目录
         essential_dirs = ['adb', 'config']
         for dir_name in essential_dirs:
-            src_dir = self.project_root / dir_name
-            if src_dir.exists():
-                dst_dir = release_dir / dir_name
-                if dst_dir.exists():
-                    shutil.rmtree(dst_dir)
-                shutil.copytree(src_dir, dst_dir)
+            self._copy_package_dir(release_dir, dir_name)
 
         # 创建日志目录
         (release_dir / 'logs').mkdir(exist_ok=True)
@@ -543,11 +924,14 @@ exe = EXE(
     def _create_dev_scripts(self, dev_dir):
         """创建开发环境脚本"""
         # 虚拟环境设置脚本
-        setup_script = '''@echo off
+        setup_script = f'''@echo off
 title TheCube工具开发环境
 echo ====================================
 echo TheCube工具 开发环境
 echo ====================================
+echo.
+echo 构建目标: {self.target_os}
+echo Python要求: {self.target_profile['python_label']}
 echo.
 
 if not exist "venv" (
@@ -566,7 +950,7 @@ call venv\\Scripts\\activate.bat
 
 echo 安装依赖包...
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python -m pip install -r {self.requirements_file}
 
 echo.
 echo ====================================
@@ -576,7 +960,7 @@ echo.
 echo 可用命令：
 echo   python main.py                 - 启动GUI程序
 echo   python stress_test\\quick_stress_test.py - 运行压力测试
-echo   python package_all.py --type portable - 打包可执行文件
+echo   python package_all.py --type portable --target-os {self.target_os} - 打包可执行文件
 echo.
 echo 输入 'deactivate' 退出虚拟环境
 echo 输入 'exit' 关闭此窗口
@@ -614,6 +998,7 @@ if exist "venv\\Scripts\\python.exe" (
 
 版本：{self.version}
 构建日期：{self.build_date}
+构建目标：{self.target_profile['display_name']}
 
 ## 目录说明
 - src/: 源代码目录
@@ -621,7 +1006,7 @@ if exist "venv\\Scripts\\python.exe" (
 - stress_test/: 压力测试模块
 - adb/: ADB工具
 - main.py: 主程序入口
-- requirements.txt: Python依赖列表
+- {self.requirements_file}: Python依赖列表
 
 ## 快速开始
 1. 运行 setup_dev.bat 设置开发环境
@@ -629,12 +1014,12 @@ if exist "venv\\Scripts\\python.exe" (
 3. 或者手动激活虚拟环境后运行 python main.py
 
 ## 开发说明
-- 使用 Python 3.7+
+- 使用 {self.target_profile['python_label']}
 - 主要依赖：tkinter, cryptography
-- 支持Windows平台
+- 支持平台：{self.target_profile['display_name']}
 
 ## 打包说明
-- 运行 package_all.py --type portable 可生成可执行文件
+- 运行 package_all.py --type portable --target-os {self.target_os} 可生成可执行文件
 - 或使用 pyinstaller 手动打包
 
 ## 注意事项
@@ -648,9 +1033,9 @@ if exist "venv\\Scripts\\python.exe" (
 
     def _create_simple_launcher(self, lite_dir):
         """创建简单启动脚本"""
-        launcher_script = '''@echo off
+        launcher_script = f'''@echo off
 echo 安装依赖...
-pip install -r requirements.txt
+pip install -r {self.requirements_file}
 echo 启动程序...
 python main.py
 pause
@@ -681,6 +1066,7 @@ if errorlevel 1 (
 
 版本：{self.version}
 构建日期：{self.build_date}
+构建目标：{self.target_profile['display_name']}
 
 ## 文件说明
 - TheCube.exe: 主程序
@@ -798,6 +1184,7 @@ title TheCube - AC8267授权工具
 echo TheCube - AC8267授权工具...
     echo 版本：v3.1.1
 echo.
+adb kill-server
 TheCube.exe
 if errorlevel 1 (
     echo.
@@ -819,8 +1206,8 @@ if errorlevel 1 (
 
 版本信息：{self.version}
 构建日期：{self.build_date}
-平台支持：Windows 10/11
-Python版本：{sys.version}
+平台支持：{self.target_profile['display_name']}
+Python版本：{self._get_target_python_version_text()}
 
 主要功能：
 - 认证器设备管理
@@ -852,7 +1239,7 @@ Python版本：{sys.version}
         user_guide = f'''# TheCube - AC8267授权工具 用户指南
 
 ## 系统要求
-- Windows 10/11 (64位)
+- {self.target_profile['display_name']}
 - USB端口用于设备连接
 - 管理员权限（首次安装驱动时需要）
 
@@ -934,11 +1321,11 @@ Python版本：{sys.version}
     def package_all(self):
         """执行完整打包流程"""
         self.log("=" * 60)
-        self.log("开始完整打包流程")
+        self.log(f"开始完整打包流程 target-os={self.target_os}")
         self.log("=" * 60)
 
         # 检查环境
-        if not self.check_environment():
+        if not self.check_environment(require_build=True):
             return False
 
         # 安装依赖
@@ -1018,6 +1405,10 @@ Python版本：{sys.version}
             'TheCube_Installer': '安装程序包',
             'TheCube_Release': '最终发布版'
         }
+        if package_name.endswith('_Win7'):
+            base_name = package_name[:-5]
+            base_description = descriptions.get(base_name, '未知类型')
+            return f"{base_description} (Windows 7兼容构建)"
         return descriptions.get(package_name, '未知类型')
 
 def main():
@@ -1025,22 +1416,27 @@ def main():
     parser = argparse.ArgumentParser(description='TheCube统一打包脚本')
     parser.add_argument('--type', choices=['all', 'dev', 'lite', 'portable', 'installer', 'release'],
                        default='all', help='指定打包类型')
+    parser.add_argument('--target-os', choices=sorted(BUILD_TARGETS.keys()), default='modern',
+                       help='指定构建目标操作系统，win7 会使用隔离依赖与独立输出目录')
+    parser.add_argument('--python-exe', default='',
+                       help='指定用于构建可执行文件的Python解释器路径；默认按 target-os 自动查找匹配版本')
     parser.add_argument('--clean', action='store_true', help='只执行清理操作')
     parser.add_argument('--no-archive', action='store_true', help='不创建压缩包')
 
     args = parser.parse_args()
 
-    packager = CBSSPackager()
+    packager = CBSSPackager(target_os=args.target_os, python_exe=args.python_exe)
 
     if args.clean:
         packager.clean_build()
         packager.log("清理完成")
         return
 
-    if not packager.check_environment():
+    requires_build = args.type in ('all', 'portable', 'installer', 'release')
+    if not packager.check_environment(require_build=requires_build):
         sys.exit(1)
 
-    if not packager.install_dependencies():
+    if requires_build and args.type != 'all' and not packager.install_dependencies():
         sys.exit(1)
 
     success = False

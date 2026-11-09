@@ -15,6 +15,7 @@ from .cube import ICube, RealCube
 
 class AuthenticationManager:
     _READY_TIME_STATUS = "ready"
+    _ACTIVATION_IN_PROGRESS_STATUS = "activate_in_progress"
 
     def __init__(self, adb_manager: ADBManager, device_monitor: DeviceMonitor):
         self.adb_manager = adb_manager
@@ -241,6 +242,8 @@ class AuthenticationManager:
     def _run_authentication(self, device_serial: str, authenticator_serial: str,
                             progress_callback: Optional[Callable] = None) -> dict:
         """串行执行激活流程，避免并发冲突"""
+        normalized_device_serial = str(device_serial or "")
+
         with self._authentication_lock:
             if self._is_authenticating:
                 return {
@@ -251,9 +254,16 @@ class AuthenticationManager:
 
             self._is_authenticating = True
 
+        with self._queue_lock:
+            if normalized_device_serial:
+                self._in_progress_serials.add(normalized_device_serial)
+
         try:
             return self._perform_authentication(device_serial, authenticator_serial, progress_callback)
         finally:
+            with self._queue_lock:
+                if normalized_device_serial:
+                    self._in_progress_serials.discard(normalized_device_serial)
             self._is_authenticating = False
 
     def authenticate_all_devices(self, authenticator_serial: str,
@@ -303,7 +313,7 @@ class AuthenticationManager:
                 if progress_callback:
                     progress_callback(f"正在激活设备 {device.serial} ({i+1}/{len(unauthorized_devices)})")
 
-                result = self._perform_authentication(device.serial, authenticator_serial)
+                result = self._perform_authentication(device.serial, authenticator_serial, progress_callback)
                 results.append({
                     'device_serial': device.serial,
                     'success': result['success'],
@@ -336,6 +346,7 @@ class AuthenticationManager:
         device_uuid = ""
         signature = ""
         log_mgr = self._log_manager
+        previous_status = ""
 
         try:
             logging.info(f"开始激活设备: {device_serial}")
@@ -433,6 +444,8 @@ class AuthenticationManager:
                 }
 
             # 步骤6: 激活设备（activate内部处理lock/markDirty/unlock）
+            previous_status = target.getStatus()
+            self._update_device_display_status(device_serial, self._ACTIVATION_IN_PROGRESS_STATUS)
             if progress_callback:
                 progress_callback("正在激活设备...")
 
@@ -441,14 +454,16 @@ class AuthenticationManager:
                 error_msg = f"设备激活失败: {activate_result.error_message}"
                 logging.error(error_msg)
                 self._log_auth_result(log_mgr, False, device_serial, device_uuid, signature, cube_id, error_msg, cube)
-                # 立即更新UI设备状态（AuthorizationFailure等）
-                self._update_device_status(device_serial, target.getStatus())
+                current_status = target.getStatus()
+                normalized_current_status = self._normalize_status(current_status)
+                rollback_status = current_status if normalized_current_status != self._ACTIVATION_IN_PROGRESS_STATUS else previous_status
+                self._update_device_display_status(device_serial, rollback_status or "Unauthorized")
                 return {
                     'success': False,
                     'message': error_msg,
                     'details': activate_result.raw_output
                 }
-
+            time.sleep(0.5)
             try:
                 self.device_monitor.refresh_all_cube()
             except Exception as refresh_error:
@@ -456,17 +471,17 @@ class AuthenticationManager:
             verify_status = self.check_device_authentication_status(device_serial)
             normalized_verify_status = verify_status.strip().lower()
             if normalized_verify_status == "unknown" and not self.check_existance(device_serial):
+                self._update_device_display_status(device_serial, previous_status or "Unauthorized")
                 return {
                     'success': False,
                     'message': f'设备 {device_serial} 在激活过程中被移除',
                     'details': ''
                 }
             if normalized_verify_status != "authorized":
-                return {
-                    'success': False,
-                    'message': f'设备激活后状态异常: {verify_status}',
-                    'details': ''
-                }
+                self._update_device_display_status(device_serial, verify_status)
+                raise Exception(f"设备状态验证失败: {verify_status}")
+
+            self._update_device_status(device_serial, "Authorized")
 
             success_msg = f"设备激活成功: {device_serial}"
             return {
@@ -574,6 +589,12 @@ class AuthenticationManager:
         if hasattr(self.device_monitor, "update_device_status"):
             self.device_monitor.update_device_status(serial, new_status)
 
+    def _update_device_display_status(self, serial: str, new_status: str) -> None:
+        if hasattr(self.device_monitor, "update_device_display_status"):
+            self.device_monitor.update_device_display_status(serial, new_status)
+            return
+        self._update_device_status(serial, new_status)
+
     def get_available_authenticators(self) -> List[str]:
         """获取可用的激活盒子列表（统一从DeviceMonitor获取）"""
         return sorted(self.device_monitor.authenticators.keys())
@@ -607,6 +628,11 @@ class AuthenticationManager:
         serial = str(serial or "")
         with self._queue_lock:
             return serial in self._queued_serials or serial in self._in_progress_serials
+
+    def is_device_activation_in_progress(self, serial: str) -> bool:
+        serial = str(serial or "")
+        with self._queue_lock:
+            return serial in self._in_progress_serials
 
     def is_device_auto_activation_completed(self, serial: str) -> bool:
         serial = str(serial or "")
